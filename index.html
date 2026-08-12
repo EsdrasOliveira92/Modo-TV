@@ -190,6 +190,21 @@ function _tvCargaHoraria(){
     }
     lista.sort(function(a,b){return a.df-b.df;});
     var atras=lista.filter(function(x){return x.df<hoje;}).length;
+    /* Se não há nada pendente AGORA neste setor, montar a lista dos PRÓXIMOS a vencer
+       (projetos que ainda vão chegar nesta etapa) — evita deixar o painel vazio na TV */
+    var proximos=[];
+    if(lista.length===0){
+      for(var pi=0;pi<rows.length;pi++){
+        var pr=rows[pi];
+        if(['pendente','planejamento','entregue'].indexOf(pr.status)>=0)continue;
+        if(pr[s.ff]==='ok'||(pr.fasesOk||[]).indexOf(s.ck)>=0)continue;
+        if(_rondaDoneSet&&_rondaDoneSet[pr.projeto+'\u00b7'+s.ck])continue;
+        var pdf=parseDate2(pr[s.ff]);
+        if(!pdf)continue;
+        proximos.push({cli:pr.cliente,proj:pr.projeto,fim:pr[s.ff],df:pdf,dias:Math.round((pdf-hoje)/864e5)});
+      }
+      proximos.sort(function(a,b){return a.df-b.df;});
+    }
     h+='<div style="background:'+_TVC.card+';border:1px solid '+_TVC.brd+';border-top:5px solid '+s.c+';border-radius:16px;padding:22px 24px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.05)">';
     h+='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">';
     h+='<div style="font-size:26px;font-weight:900;color:'+s.c+'">'+s.icon+' '+s.l+'</div>';
@@ -208,7 +223,23 @@ function _tvCargaHoraria(){
       h+='</div>';
     }
     if(lista.length>8)h+='<div style="font-size:13px;color:'+_TVC.txt3+';margin-top:10px;text-align:center">+ '+(lista.length-8)+' outros projetos</div>';
-    if(lista.length===0)h+='<div style="display:flex;align-items:center;justify-content:center;height:100%;font-size:20px;color:'+_TVC.green+'">✓ Nada pendente</div>';
+    if(lista.length===0){
+      if(proximos.length===0)h+='<div style="display:flex;align-items:center;justify-content:center;height:100%;font-size:20px;color:'+_TVC.green+'">✓ Nada pendente</div>';
+      else{
+        h+='<div style="font-size:12px;font-weight:800;color:'+_TVC.txt3+';text-transform:uppercase;letter-spacing:1px;margin-bottom:8px">Próximos a vencer</div>';
+        var plim=Math.min(8,proximos.length);
+        for(var pk=0;pk<plim;pk++){
+          var pit=proximos[pk];
+          var purg=pit.dias<0?_TVC.red:pit.dias<=2?_TVC.orange:pit.dias<=5?_TVC.amber:_TVC.green;
+          var pbadge=pit.dias<0?Math.abs(pit.dias)+'d atraso':pit.dias===0?'hoje':pit.dias===1?'amanhã':pit.dias+' dias';
+          h+='<div style="display:flex;align-items:center;justify-content:space-between;padding:9px 0;border-bottom:1px solid '+_TVC.brd+';opacity:.78">';
+          h+='<div style="flex:1;min-width:0"><div style="font-size:16px;font-weight:800;color:'+_TVC.txt+';white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(pit.cli)+'</div><div style="font-size:12px;color:'+_TVC.txt3+'">'+esc(pit.proj)+' · fim '+esc(pit.fim||'—')+'</div></div>';
+          h+='<div style="text-align:right;margin-left:12px;flex-shrink:0"><span style="background:'+purg+';color:#fff;font-size:12px;font-weight:900;padding:4px 11px;border-radius:8px;white-space:nowrap">'+pbadge+'</span></div>';
+          h+='</div>';
+        }
+        if(proximos.length>8)h+='<div style="font-size:12px;color:'+_TVC.txt3+';margin-top:9px;text-align:center">+ '+(proximos.length-8)+' outros</div>';
+      }
+    }
     h+='</div></div>';
   });
   h+='</div>';
@@ -249,15 +280,13 @@ function _tvCargaHorasSetor(){
     h+='<div style="height:10px;background:'+_TVC.bg+';border-radius:5px;overflow:hidden;margin-bottom:14px;border:1px solid '+_TVC.brd+'">';
     h+='<div style="height:100%;width:'+Math.min(100,pctTotal)+'%;background:'+(overCap?_TVC.red:pctTotal>=80?_TVC.amber:_TVC.green)+'"></div>';
     h+='</div>';
-    if(overCap)h+='<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:10px;padding:7px 14px;font-size:13px;font-weight:900;color:'+_TVC.red+';margin-bottom:12px">🔴 '+pctTotal+'% da capacidade — sobrecarregado</div>';
-    else h+='<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:7px 14px;font-size:13px;font-weight:900;color:'+_TVC.green+';margin-bottom:12px">✅ '+pctTotal+'% da capacidade — dentro do limite</div>';
     h+='<div style="flex:1;overflow:hidden">';
     var lim=Math.min(6,lista.length);
     for(var k=0;k<lim;k++){
       var it=lista[k];
       h+='<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid '+_TVC.brd+'">';
       h+='<div style="flex:1;min-width:0"><div style="font-size:15px;font-weight:800;color:'+_TVC.txt+';white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(it.cli)+'</div><div style="font-size:11px;color:'+_TVC.txt3+'">'+esc(it.proj)+'</div></div>';
-      h+='<div style="text-align:right;flex-shrink:0"><span style="font-size:14px;font-weight:900;color:'+s.c+'">'+it.horas+'h</span> <span style="font-size:10px;color:'+_TVC.txt3+'">('+it.pct+'%)</span></div>';
+      h+='<div style="text-align:right;flex-shrink:0"><span style="font-size:14px;font-weight:900;color:'+s.c+'">'+it.horas+'h</span></div>';
       h+='</div>';
     }
     if(lista.length>6)h+='<div style="font-size:11px;color:'+_TVC.txt3+';margin-top:8px;text-align:center">+ '+(lista.length-6)+' outros</div>';
