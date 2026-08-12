@@ -33,7 +33,7 @@
    ═══════════════════════════════════════════════════════════════ */
 
 /* ⚙️ CONFIGURAÇÃO — troque pela URL RAW do seu arquivo no GitHub após o setup */
-var DADOS_URL = 'COLE_AQUI_A_URL_RAW_DO_SEU_GITHUB/dados_tv.json';
+var DADOS_URL ='https://esdrasoliveira92.github.io/Modo-TV/';
 var POLL_MS = 60000; /* verifica se o arquivo mudou a cada 60s (troca é manual, 2-3x/dia) */
 
 var rows = [];
