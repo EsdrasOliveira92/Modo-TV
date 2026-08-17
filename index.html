@@ -41,7 +41,7 @@ var hdrTitle = 'PLANEJAMENTO DE PRODUÇÃO';
 var hdrSub = '';
 var _ganttCap = {pcp:2,solda:4,acab:7,mmec:12,mel:5,serra:2,usinagem:9,insp:3};
 var _WEEK_H_PER_WORKER=44;/* 4×9h + 1×8h = 44h/semana */
-var _rondaDoneSet={};/* TV standalone é só apresentação — não marca ronda como concluída */
+var _rondaDoneSet={};/* preenchido pelo campo rondaDone do dados_tv.json — o totem só lê */
 var _rondaIncluiConcluidas=false;
 var _rondaJanela='semana';
 var _lastPublishedAt = '';
@@ -182,7 +182,7 @@ function _tvCargaHoraria(){
       var r=rows[i];
       if(['pendente','planejamento','entregue'].indexOf(r.status)>=0)continue;
       if(!_phaseReachable(r,s.ck))continue;/* match exato: só mostra se o status real é este setor */
-      if(r[s.ff]==='ok'||(r.fasesOk||[]).indexOf(s.ck)>=0)continue;
+      if(r[s.ff]==='ok'||_faseFeita(r,s.ck))continue;
       if(_rondaDoneSet&&_rondaDoneSet[r.projeto+'\u00b7'+s.ck])continue;
       var di=parseDate2(r[s.fi]),df=parseDate2(r[s.ff]);
       if(!df)continue;
@@ -192,19 +192,33 @@ function _tvCargaHoraria(){
     var atras=lista.filter(function(x){return x.df<hoje;}).length;
     /* Se não há nada pendente AGORA neste setor, montar a lista dos PRÓXIMOS a vencer
        (projetos que ainda vão chegar nesta etapa) — evita deixar o painel vazio na TV */
-    var proximos=[];
+    /* ═══ CORREÇÃO 15/08/2026 — "Próximos a vencer" não é atraso ═══
+       PORQUÊ: este fallback varria a carteira inteira sem checar se a fase ainda
+       está à frente. Fase com data vencida entrava e era pintada de vermelho como
+       "Nd atraso", produzindo um card que dizia "0 PENDENTES" e listava 47 projetos
+       em atraso ao mesmo tempo. Regra do Esdras: atraso no setor é só o que NÃO foi
+       concluído NESTE setor — e isso é o `lista` acima (match exato de status).
+       O fallback existe apenas para não deixar a TV vazia, então passa a mostrar
+       exclusivamente fases FUTURAS (dias >= 0). Nada aqui conta como atraso. */
+    var proximos=[],venctoSemMarca=0;
     if(lista.length===0){
       for(var pi=0;pi<rows.length;pi++){
         var pr=rows[pi];
         if(['pendente','planejamento','entregue'].indexOf(pr.status)>=0)continue;
-        if(pr[s.ff]==='ok'||(pr.fasesOk||[]).indexOf(s.ck)>=0)continue;
+        if(pr[s.ff]==='ok'||_faseFeita(pr,s.ck))continue;
         if(_rondaDoneSet&&_rondaDoneSet[pr.projeto+'\u00b7'+s.ck])continue;
         var pdf=parseDate2(pr[s.ff]);
         if(!pdf)continue;
-        proximos.push({cli:pr.cliente,proj:pr.projeto,fim:pr[s.ff],df:pdf,dias:Math.round((pdf-hoje)/864e5)});
+        pdf.setHours(0,0,0,0);
+        var pdias=Math.round((pdf-hoje)/864e5);
+        /* Data já passada: a fase não é "próxima a vencer". Não entra na lista e
+           não vira atraso — só alimenta o contador de fases sem marcação. */
+        if(pdias<0){venctoSemMarca++;continue;}
+        proximos.push({cli:pr.cliente,proj:pr.projeto,fim:pr[s.ff],df:pdf,dias:pdias});
       }
       proximos.sort(function(a,b){return a.df-b.df;});
     }
+
     h+='<div style="background:'+_TVC.card+';border:1px solid '+_TVC.brd+';border-top:5px solid '+s.c+';border-radius:16px;padding:22px 24px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.05)">';
     h+='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">';
     h+='<div style="font-size:26px;font-weight:900;color:'+s.c+'">'+s.icon+' '+s.l+'</div>';
@@ -224,22 +238,30 @@ function _tvCargaHoraria(){
     }
     if(lista.length>8)h+='<div style="font-size:13px;color:'+_TVC.txt3+';margin-top:10px;text-align:center">+ '+(lista.length-8)+' outros projetos</div>';
     if(lista.length===0){
-      if(proximos.length===0)h+='<div style="display:flex;align-items:center;justify-content:center;height:100%;font-size:20px;color:'+_TVC.green+'">✓ Nada pendente</div>';
+      if(proximos.length===0){
+        h+='<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:8px">';
+        h+='<div style="font-size:22px;font-weight:900;color:'+_TVC.green+'">✓ Nada pendente neste setor</div>';
+        if(venctoSemMarca>0)h+='<div style="font-size:13px;color:'+_TVC.txt3+';text-align:center;max-width:90%">'+venctoSemMarca+' fase'+(venctoSemMarca>1?'s':'')+' com data já passada e sem marcação de conclusão</div>';
+        h+='</div>';
+      }
       else{
-        h+='<div style="font-size:12px;font-weight:800;color:'+_TVC.txt3+';text-transform:uppercase;letter-spacing:1px;margin-bottom:8px">Próximos a vencer</div>';
+        h+='<div style="font-size:12px;font-weight:800;color:'+_TVC.txt3+';text-transform:uppercase;letter-spacing:1px;margin-bottom:8px">Próximos a vencer · ainda não chegaram aqui</div>';
         var plim=Math.min(8,proximos.length);
         for(var pk=0;pk<plim;pk++){
           var pit=proximos[pk];
-          var purg=pit.dias<0?_TVC.red:pit.dias<=2?_TVC.orange:pit.dias<=5?_TVC.amber:_TVC.green;
-          var pbadge=pit.dias<0?Math.abs(pit.dias)+'d atraso':pit.dias===0?'hoje':pit.dias===1?'amanhã':pit.dias+' dias';
+          /* Só fases futuras chegam aqui — nunca vermelho, nunca "atraso" */
+          var purg=pit.dias<=2?_TVC.orange:pit.dias<=5?_TVC.amber:_TVC.green;
+          var pbadge=pit.dias===0?'hoje':pit.dias===1?'amanhã':'em '+pit.dias+' dias';
           h+='<div style="display:flex;align-items:center;justify-content:space-between;padding:9px 0;border-bottom:1px solid '+_TVC.brd+';opacity:.78">';
-          h+='<div style="flex:1;min-width:0"><div style="font-size:16px;font-weight:800;color:'+_TVC.txt+';white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(pit.cli)+'</div><div style="font-size:12px;color:'+_TVC.txt3+'">'+esc(pit.proj)+' · fim '+esc(pit.fim||'—')+'</div></div>';
+          h+='<div style="flex:1;min-width:0"><div style="font-size:16px;font-weight:800;color:'+_TVC.txt+';white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(pit.cli)+'</div><div style="font-size:12px;color:'+_TVC.txt3+'">'+esc(pit.proj)+' · previsto '+esc(pit.fim||'—')+'</div></div>';
           h+='<div style="text-align:right;margin-left:12px;flex-shrink:0"><span style="background:'+purg+';color:#fff;font-size:12px;font-weight:900;padding:4px 11px;border-radius:8px;white-space:nowrap">'+pbadge+'</span></div>';
           h+='</div>';
         }
         if(proximos.length>8)h+='<div style="font-size:12px;color:'+_TVC.txt3+';margin-top:9px;text-align:center">+ '+(proximos.length-8)+' outros</div>';
+        if(venctoSemMarca>0)h+='<div style="font-size:11px;color:'+_TVC.txt3+';margin-top:10px;text-align:center;font-style:italic">'+venctoSemMarca+' fase'+(venctoSemMarca>1?'s':'')+' com data passada sem marcação — não contam como atraso deste setor</div>';
       }
     }
+
     h+='</div></div>';
   });
   h+='</div>';
@@ -265,7 +287,7 @@ function _tvCargaHorasSetor(){
       var r=rows[i];
       if(['pendente','planejamento','entregue'].indexOf(r.status)>=0)continue;
       if(r[s.fi]==='ok'||r[s.ff]==='ok')continue;
-      if((r.fasesOk||[]).indexOf(s.hk)>=0)continue;
+      if(_faseFeita(r,s.hk))continue;
       if(_rondaDoneSet&&_rondaDoneSet[r.projeto+'\u00b7'+s.hk])continue;
       var ds=parseDate2(r[s.fi]),de=parseDate2(r[s.ff]);
       if(s.fi===s.ff&&ds&&!de)de=new Date(ds.getTime()+2*864e5);
@@ -447,6 +469,26 @@ function _tvFunil(){
 
 function _tvActiveRows(){return rows.filter(function(r){return r.status!=='pendente'&&r.status!=='planejamento'&&r.status!=='entregue';});}
 
+/* ═══ CONCLUSÃO DE FASE — RESOLUÇÃO DE ALIAS (15/08/2026) ═══
+   DEFEITO CORRIGIDO: o chip 'serra' era LIDO em três lugares (Carga Horária do
+   artefato, TV Carga Horária, TV Carga Horária por Setor) e ESCRITO em NENHUM.
+   FASE_SEQ — única fonte que grava fasesOk, usada pelo Verificar Progresso e
+   pelo chip da ficha — tem só a entrada {chip:'laser', ini:'corte', fim:'laser',
+   lbl:'Corte / Laser'}. Não existe entrada 'serra'. Resultado: marcar a Serra
+   como concluída gravava 'laser', e o card da Serra procurava 'serra' — nunca
+   achava, e o projeto ficava listado para sempre, por mais que fosse validado.
+   Este resolvedor aceita os dois chips para a mesma fase física de corte. */
+var _FASE_ALIAS={serra:['serra','laser']};
+function _faseFeita(r,chip){
+  if(!r)return false;
+  var cks=_FASE_ALIAS[chip]||[chip];
+  var fo=r.fasesOk||[];
+  for(var i=0;i<cks.length;i++){
+    if(fo.indexOf(cks[i])>=0)return true;
+    if(r.fasesCompletedDate&&r.fasesCompletedDate[cks[i]])return true;
+  }
+  return false;
+}
 function _phaseReachable(r,chip){
   var allowed=_CK_STATUSES[chip];
   if(!allowed)return true;
@@ -532,7 +574,7 @@ function _rondaBuildFila(chip){
     var ini=r[s.ini]||'',fim=r[s.fim]||'';
     var fimD=parseDate2(fim);
     var _rdKey=_rondaDoneKey(r.projeto,s.chip);
-    var concluida=(r.fasesOk||[]).indexOf(s.chip)>=0 || _isOk(fim) || !!_rondaDoneSet[_rdKey];
+    var concluida=_faseFeita(r,s.chip) || _isOk(fim) || !!_rondaDoneSet[_rdKey];
     if(!fimD && !concluida)continue;
     var diasFim=fimD?Math.round((fimD-hoje)/864e5):null;
     var incluir=false;
@@ -670,6 +712,9 @@ async function _carregarDados(silencioso){
     if(data.hdrTitle)hdrTitle=data.hdrTitle;
     if(data.hdrSub)hdrSub=data.hdrSub;
     if(data.ganttCap)_ganttCap=data.ganttCap;
+    /* Marcações da Ronda feitas no painel do PCP — sem isso o totem mostra como
+       pendente aquilo que já foi validado no outro dispositivo. */
+    _rondaDoneSet=(data.rondaDone&&typeof data.rondaDone==='object')?data.rondaDone:{};
     _lastPublishedAt=data.publishedAt||'';
     var pi=document.getElementById('tv-pubinfo');
     if(pi&&_lastPublishedAt)pi.textContent='Publicado: '+_lastPublishedAt;
