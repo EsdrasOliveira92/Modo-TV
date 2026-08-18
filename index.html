@@ -51,6 +51,9 @@ var _WORK_DAY_H={0:0,1:9,2:9,3:9,4:9,5:8,6:0};
 var PROC_LABELS={pcp:'PCP / Cadastro',serra:'Serra',usinagem:'Usinagem',solda:'Solda',acabamento:'Acabamento',inspecao:'Inspeção / C.Q',mont_mec:'Mont. Mecânica',mont_el:'Mont. Elétrica',testes:'Testes / FAT'};
 var PROC_KEYS=['pcp','serra','usinagem','solda','acabamento','inspecao','mont_mec','mont_el','testes'];
 var _CK_STATUSES={
+  /* PORQUÊ ESTA LINHA É OBRIGATÓRIA: _phaseReachable retorna TRUE quando o chip não
+     tem mapeamento. Sem 'engenharia' aqui, o card despejaria a carteira inteira. */
+  engenharia:['projeto'],
   pcp:['pcp'],
   compras:['compras'],
   serra:['laser'],
@@ -84,6 +87,9 @@ var _TVC={bg:'#eef2f7',card:'#ffffff',brd:'#dbe3ec',brd2:'#c7d2de',
   cyan:'#0e7490',green:'#059669',red:'#dc2626',amber:'#d97706',
   blue:'#2563eb',purple:'#7c3aed',orange:'#ea580c',pink:'#db2777',teal:'#0d9488'};
 var _TV_CARGA_SETORES=[
+  /* Engenharia entra como PRIMEIRO setor: a entrega do projeto é o gatilho de todo
+     o processo. Campo entrega_cdt, mesma data para início e fim (evento, não janela). */
+  {l:'Engenharia',fi:'entrega_cdt',ff:'entrega_cdt',ck:'engenharia',c:'#0891b2',icon:'📐'},
   {l:'PCP / Cadastro',fi:'inic_cdt',ff:'fim_cdt',ck:'pcp',c:'#a855f7',icon:'📋'},
   {l:'Serra',fi:'corte',ff:'corte',ck:'serra',c:'#ea580c',icon:'🪚'},
   {l:'Laser / Corte',fi:'laser',ff:'laser',ck:'laser',c:'#0e7490',icon:'✂️'},
@@ -95,7 +101,7 @@ var _TV_CARGA_SETORES=[
   {l:'Mont. Elétrica',fi:'mel_inic',ff:'mel_fim',ck:'mont_el',c:'#ca8a04',icon:'⚡'},
   {l:'Testes',fi:'teste_inic',ff:'teste_fim',ck:'testes',c:'#7c3aed',icon:'🧪'}
 ];
-var _TV_CARGA_PAIRS=[[0,1],[2,3],[4,5],[6,7],[8,9]];
+var _TV_CARGA_PAIRS=[[0,1],[2,3],[4,5],[6,7],[8,9],[10]];/* 11 setores: Testes fica sozinho no último slide */
 var _TV_HORAS_SETORES=[
   {label:'PCP / Cadastro',fi:'inic_cdt',ff:'fim_cdt', hk:'pcp',     capKey:'pcp',      c:'#a855f7',icon:'📋'},
   {label:'Serra',       fi:'corte',    ff:'corte',    hk:'serra',    capKey:'serra',    c:'#ea580c',icon:'🪚'},
@@ -478,7 +484,7 @@ function _tvActiveRows(){return rows.filter(function(r){return r.status!=='pende
    como concluída gravava 'laser', e o card da Serra procurava 'serra' — nunca
    achava, e o projeto ficava listado para sempre, por mais que fosse validado.
    Este resolvedor aceita os dois chips para a mesma fase física de corte. */
-var _FASE_ALIAS={serra:['serra','laser']};
+var _FASE_ALIAS={serra:['serra','laser'],engenharia:['engenharia','cadastro']};/* Cadastro concluído implica engenharia entregue — evita repetir o órfão do chip 'serra' */
 function _faseFeita(r,chip){
   if(!r)return false;
   var cks=_FASE_ALIAS[chip]||[chip];
