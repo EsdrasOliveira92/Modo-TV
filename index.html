@@ -135,7 +135,63 @@ function parseDate2(s){if(!s)return null;var sn=normDateStr(s);if(!sn||sn==='ok'
 
 function _isOk(v){return v&&String(v).toLowerCase().trim()==='ok';}
 
-function _wdh(d){return _WORK_DAY_H[d.getDay()]||0;}
+/* ═══ FERIADOS (19/08/2026) ═══
+   PORQUÊ: _wdh() só olhava o dia da semana. Natal numa quinta contava como dia
+   produtivo de 9h, e _addDiasUteis atravessava o feriado como se fosse expediente.
+   Efeito: cronogramas otimistas em dezembro, Semana Santa, Carnaval e Corpus Christi.
+   Agora feriado vale 0h e não conta como dia útil, exatamente como sábado e domingo.
+   Móveis são derivados da Páscoa (algoritmo de Meeus/Butcher), então valem para
+   qualquer ano sem precisar manutenção anual. */
+var _FERIADOS_FIXOS=[
+  '01-01', /* Confraternização Universal */
+  '04-21', /* Tiradentes */
+  '05-01', /* Dia do Trabalho */
+  '09-07', /* Independência */
+  '10-12', /* Nossa Senhora Aparecida */
+  '11-02', /* Finados */
+  '11-15', /* Proclamação da República */
+  '11-20', /* Consciência Negra */
+  '12-24', /* Véspera de Natal */
+  '12-25', /* Natal */
+  '12-31'  /* Véspera de Ano Novo */
+];
+var _FERIADOS_EXTRA=[];/* datas pontuais 'AAAA-MM-DD' — pontes e paradas de fábrica */
+var _PASCOA_CACHE={};
+function _pascoa(ano){
+  if(_PASCOA_CACHE[ano])return _PASCOA_CACHE[ano];
+  var a=ano%19,b=Math.floor(ano/100),c=ano%100;
+  var d=Math.floor(b/4),e=b%4,f=Math.floor((b+8)/25),g=Math.floor((b-f+1)/3);
+  var h=(19*a+b-d-g+15)%30,i=Math.floor(c/4),k=c%4;
+  var l=(32+2*e+2*i-h-k)%7,m=Math.floor((a+11*h+22*l)/451);
+  var mes=Math.floor((h+l-7*m+114)/31),dia=((h+l-7*m+114)%31)+1;
+  var p=new Date(ano,mes-1,dia);p.setHours(0,0,0,0);
+  _PASCOA_CACHE[ano]=p;return p;
+}
+var _FERIADOS_MOVEIS_CACHE={};
+function _feriadosMoveis(ano){
+  if(_FERIADOS_MOVEIS_CACHE[ano])return _FERIADOS_MOVEIS_CACHE[ano];
+  var p=_pascoa(ano),set={};
+  function marca(offDias){
+    var d=new Date(p.getTime()+offDias*864e5);
+    set[d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2)+'-'+('0'+d.getDate()).slice(-2)]=1;
+  }
+  marca(-48);/* Segunda de Carnaval */
+  marca(-47);/* Terça de Carnaval */
+  marca(-46);/* Quarta de Cinzas (meio expediente na prática — tratada como feriado) */
+  marca(-2); /* Sexta-feira Santa */
+  marca(60); /* Corpus Christi */
+  _FERIADOS_MOVEIS_CACHE[ano]=set;return set;
+}
+function _isFeriado(d){
+  if(!d)return false;
+  var mm=('0'+(d.getMonth()+1)).slice(-2),dd=('0'+d.getDate()).slice(-2);
+  if(_FERIADOS_FIXOS.indexOf(mm+'-'+dd)>=0)return true;
+  var iso=d.getFullYear()+'-'+mm+'-'+dd;
+  if(_FERIADOS_EXTRA.indexOf(iso)>=0)return true;
+  return !!_feriadosMoveis(d.getFullYear())[iso];
+}
+
+function _wdh(d){if(_isFeriado(d))return 0;return _WORK_DAY_H[d.getDay()]||0;}
 
 function _tvPanorama(){
   var ativos=_tvActiveRows();
