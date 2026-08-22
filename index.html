@@ -54,9 +54,13 @@ var _CK_STATUSES={
   /* PORQUÊ ESTA LINHA É OBRIGATÓRIA: _phaseReachable retorna TRUE quando o chip não
      tem mapeamento. Sem 'engenharia' aqui, o card despejaria a carteira inteira. */
   engenharia:['projeto'],
+  /* As 3 etapas da Serra são feitas pelo mesmo time, que se reveza — todas casam
+     com os mesmos status. Inclui 'serra', que existia em SOPTS sem consumidor. */
+  serra_int:['serra','laser'],
+  serra_tubo:['serra','laser'],
   pcp:['pcp'],
   compras:['compras'],
-  serra:['laser'],
+  serra:['serra','laser'],
   laser:['laser'],
   usinagem:['usinagem'],
   solda:['solda'],
@@ -70,7 +74,9 @@ var _CK_STATUSES={
 var _RONDA_SETORES=[
   {chip:'cadastro',   ini:'inic_cdt',     fim:'fim_cdt',    lbl:'Cadastro',                icon:'📝', color:'#a78bfa'},
   {chip:'compras',    ini:'inic_compras', fim:'fim_compras',lbl:'Compras',                 icon:'🛒', color:'#818cf8'},
-  {chip:'serra',      ini:'corte',        fim:'corte',      lbl:'Serra',                   icon:'🪚', color:'#f97316', fimField:'corte'},
+  {chip:'serra',      ini:'corte',        fim:'corte',      lbl:'Serra — Usin. Externa',   icon:'🪚', color:'#f97316', fimField:'corte'},
+  {chip:'serra_int',  ini:'corte_int',    fim:'corte_int',  lbl:'Serra — Usin. Interna',   icon:'🪚', color:'#ea580c', fimField:'corte_int'},
+  {chip:'serra_tubo', ini:'corte_tubo',   fim:'corte_tubo', lbl:'Serra — Tubos (Solda)',   icon:'🪚', color:'#c2410c', fimField:'corte_tubo'},
   {chip:'laser',      ini:'laser',        fim:'laser',      lbl:'Laser / Corte',           icon:'✂️', color:'#22d3ee', fimField:'laser'},
   {chip:'usinagem',   ini:'usi_inic',     fim:'usi_fim',    lbl:'Usinagem (Serra+Fresa)',  icon:'🔩', color:'#0e7490'},
   {chip:'solda',      ini:'solda_inic',   fim:'solda_fim',  lbl:'Solda',                   icon:'🔥', color:'#fb923c'},
@@ -91,7 +97,9 @@ var _TV_CARGA_SETORES=[
      o processo. Campo entrega_cdt, mesma data para início e fim (evento, não janela). */
   {l:'Engenharia',fi:'entrega_cdt',ff:'entrega_cdt',ck:'engenharia',c:'#0891b2',icon:'📐'},
   {l:'PCP / Cadastro',fi:'inic_cdt',ff:'fim_cdt',ck:'pcp',c:'#a855f7',icon:'📋'},
-  {l:'Serra',fi:'corte',ff:'corte',ck:'serra',c:'#ea580c',icon:'🪚'},
+  {l:'Serra — Usin. Externa',fi:'corte',ff:'corte',ck:'serra',c:'#ea580c',icon:'🪚'},
+  {l:'Serra — Usin. Interna',fi:'corte_int',ff:'corte_int',ck:'serra_int',c:'#c2410c',icon:'🪚'},
+  {l:'Serra — Tubos',fi:'corte_tubo',ff:'corte_tubo',ck:'serra_tubo',c:'#9a3412',icon:'🪚'},
   {l:'Laser / Corte',fi:'laser',ff:'laser',ck:'laser',c:'#0e7490',icon:'✂️'},
   {l:'Usinagem',fi:'usi_inic',ff:'usi_fim',ck:'usinagem',c:'#2563eb',icon:'🔩'},
   {l:'Solda',fi:'solda_inic',ff:'solda_fim',ck:'solda',c:'#c2410c',icon:'🔥'},
@@ -101,7 +109,7 @@ var _TV_CARGA_SETORES=[
   {l:'Mont. Elétrica',fi:'mel_inic',ff:'mel_fim',ck:'mont_el',c:'#ca8a04',icon:'⚡'},
   {l:'Testes',fi:'teste_inic',ff:'teste_fim',ck:'testes',c:'#7c3aed',icon:'🧪'}
 ];
-var _TV_CARGA_PAIRS=[[0,1],[2,3],[4,5],[6,7],[8,9],[10]];/* 11 setores: Testes fica sozinho no último slide */
+var _TV_CARGA_PAIRS=[[0,1],[2,3],[4,5],[6,7],[8,9],[10,11],[12]];/* 13 setores: Serra virou 3 · Testes sozinho no último */
 var _TV_HORAS_SETORES=[
   {label:'PCP / Cadastro',fi:'inic_cdt',ff:'fim_cdt', hk:'pcp',     capKey:'pcp',      c:'#a855f7',icon:'📋'},
   {label:'Serra',       fi:'corte',    ff:'corte',    hk:'serra',    capKey:'serra',    c:'#ea580c',icon:'🪚'},
@@ -189,6 +197,35 @@ function _isFeriado(d){
   var iso=d.getFullYear()+'-'+mm+'-'+dd;
   if(_FERIADOS_EXTRA.indexOf(iso)>=0)return true;
   return !!_feriadosMoveis(d.getFullYear())[iso];
+}
+
+
+/* ═══ HORAS CUSTOMIZADAS — portado VERBATIM do painel (19/08/2026) ═══
+   O totem usava só o HORAS_DB embutido. Modelo novo ou override de horas feito
+   no painel não chegava aqui, e a Carga Horária por Setor dava número diferente
+   da mesma tela no painel. Agora o JSON traz _horasExtra e o totem aplica igual. */
+var _horasExtra={maquinas:[],implementos:[],horas_overrides:{}};
+var _horasBaseSnap=null;
+function _initHorasBase(){if(!_horasBaseSnap)_horasBaseSnap={maquinas:HORAS_DB.maquinas.slice(),implementos:HORAS_DB.implementos.slice()};}
+function _applyHorasExtra(){
+  _initHorasBase();
+  var ovr=_horasExtra.horas_overrides||{};
+  Object.keys(ovr).forEach(function(pk){
+    if(!HORAS_DB.horas[pk])HORAS_DB.horas[pk]={};
+    Object.assign(HORAS_DB.horas[pk],ovr[pk]);
+  });
+  (_horasExtra.maquinas||[]).forEach(function(m){
+    if(HORAS_DB.maquinas.indexOf(m)<0){
+      HORAS_DB.maquinas.push(m);
+      PROC_KEYS.forEach(function(pk){if(!HORAS_DB.horas[pk])HORAS_DB.horas[pk]={};if(!HORAS_DB.horas[pk][m])HORAS_DB.horas[pk][m]=0;});
+    }
+  });
+  (_horasExtra.implementos||[]).forEach(function(imp){
+    if(HORAS_DB.implementos.indexOf(imp)<0){
+      HORAS_DB.implementos.push(imp);
+      PROC_KEYS.forEach(function(pk){if(!HORAS_DB.horas[pk])HORAS_DB.horas[pk]={};if(!HORAS_DB.horas[pk][imp])HORAS_DB.horas[pk][imp]=0;});
+    }
+  });
 }
 
 function _wdh(d){if(_isFeriado(d))return 0;return _WORK_DAY_H[d.getDay()]||0;}
@@ -540,7 +577,7 @@ function _tvActiveRows(){return rows.filter(function(r){return r.status!=='pende
    como concluída gravava 'laser', e o card da Serra procurava 'serra' — nunca
    achava, e o projeto ficava listado para sempre, por mais que fosse validado.
    Este resolvedor aceita os dois chips para a mesma fase física de corte. */
-var _FASE_ALIAS={serra:['serra','laser'],engenharia:['engenharia','cadastro']};/* Cadastro concluído implica engenharia entregue — evita repetir o órfão do chip 'serra' */
+var _FASE_ALIAS={serra:['serra','laser'],serra_int:['serra_int'],serra_tubo:['serra_tubo'],engenharia:['engenharia','cadastro']};/* Cadastro concluído implica engenharia entregue — evita repetir o órfão do chip 'serra' */
 function _faseFeita(r,chip){
   if(!r)return false;
   var cks=_FASE_ALIAS[chip]||[chip];
@@ -777,6 +814,20 @@ async function _carregarDados(silencioso){
     /* Marcações da Ronda feitas no painel do PCP — sem isso o totem mostra como
        pendente aquilo que já foi validado no outro dispositivo. */
     _rondaDoneSet=(data.rondaDone&&typeof data.rondaDone==='object')?data.rondaDone:{};
+    /* Horas customizadas: modelos/implementos novos e overrides feitos no painel */
+    if(data.horasExtra&&typeof data.horasExtra==='object'){
+      _horasExtra=data.horasExtra;
+      try{_applyHorasExtra();}catch(e){}
+    }
+    /* Pontes e paradas de fábrica — sem isso os dias úteis divergem do painel */
+    if(Array.isArray(data.feriadosExtra))_FERIADOS_EXTRA=data.feriadosExtra;
+    /* Jornada e capacidade semanal */
+    if(data.workDayH&&typeof data.workDayH==='object')_WORK_DAY_H=data.workDayH;
+    if(typeof data.weekH==='number'&&data.weekH>0)_WEEK_H_PER_WORKER=data.weekH;
+    /* Aviso se o painel estiver publicando um formato mais novo que este totem */
+    if(typeof data.schemaV==='number'&&data.schemaV>2){
+      console.warn('[Modo TV] O painel publicou schemaV='+data.schemaV+' e este totem entende até 2. Atualize o index.html.');
+    }
     _lastPublishedAt=data.publishedAt||'';
     var pi=document.getElementById('tv-pubinfo');
     if(pi&&_lastPublishedAt)pi.textContent='Publicado: '+_lastPublishedAt;
@@ -801,7 +852,22 @@ async function _boot(){
   _tvBuildChrome();
   _tvRender();
   _tvStartTimer();
-  setInterval(function(){_carregarDados(true);},POLL_MS);
+  /* ═══ MESMO FLUXO DO ARTEFATO (19/08/2026) ═══
+     O painel só busca atualização quando a aba está visível (visibilityState).
+     O totem não tinha essa guarda: ficava batendo no GitHub mesmo com a tela
+     apagada ou a aba em segundo plano. E, ao voltar a ficar visível, esperava o
+     ciclo inteiro para atualizar — podendo exibir dado velho por minutos. */
+  setInterval(function(){
+    if(typeof document!=='undefined'&&document.visibilityState==='hidden')return;
+    if(typeof navigator!=='undefined'&&navigator.onLine===false)return;
+    _carregarDados(true);
+  },POLL_MS);
+  /* Voltou a ficar visível → recarrega na hora, sem esperar o próximo ciclo */
+  document.addEventListener('visibilitychange',function(){
+    if(document.visibilityState==='visible')_carregarDados(true);
+  });
+  /* Reconectou → recarrega na hora */
+  window.addEventListener('online',function(){_carregarDados(true);});
 }
 _boot();
 </script>
