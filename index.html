@@ -280,7 +280,7 @@ function _tvCargaHoraria(){
     for(var i=0;i<rows.length;i++){
       var r=rows[i];
       if(['pendente','planejamento','entregue'].indexOf(r.status)>=0)continue;
-      if(!_phaseReachable(r,s.ck))continue;/* match exato: só mostra se o status real é este setor */
+      if(_jaPassouChip(r,s.ck))continue;/* já passou desta etapa — os que ainda não chegaram ficam */
       if(r[s.ff]==='ok'||_faseFeita(r,s.ck))continue;
       if(_rondaDoneSet&&_rondaDoneSet[r.projeto+'\u00b7'+s.ck])continue;
       var di=parseDate2(r[s.fi]),df=parseDate2(r[s.ff]);
@@ -304,6 +304,7 @@ function _tvCargaHoraria(){
       for(var pi=0;pi<rows.length;pi++){
         var pr=rows[pi];
         if(['pendente','planejamento','entregue'].indexOf(pr.status)>=0)continue;
+        if(_jaPassouChip(pr,s.ck))continue;/* mesma regra da lista principal */
         if(pr[s.ff]==='ok'||_faseFeita(pr,s.ck))continue;
         if(_rondaDoneSet&&_rondaDoneSet[pr.projeto+'\u00b7'+s.ck])continue;
         var pdf=parseDate2(pr[s.ff]);
@@ -588,6 +589,28 @@ function _faseFeita(r,chip){
   }
   return false;
 }
+/* ═══ POSIÇÃO NA CASCATA — REGRA ÚNICA (23/08/2026) ═══
+   Havia TRÊS regras diferentes no sistema, e por isso os números não batiam:
+     · Ronda PCP        — sem filtro nenhum  → Mont.Mecânica com 44
+     · TV Carga Horária — match exato de status → a mesma com 6
+     · Detalhe de fase  — posição na cascata (a correta)
+   Agora todas usam esta: o fluxo é encadeado, então projeto que já está num setor
+   posterior tem os anteriores concluídos, e projeto que ainda não chegou continua
+   na lista — é dele que vêm os "demais vencimentos" que faltavam nas abas.
+   `reprogramado` fica fora: é marca paralela, não posição de fluxo. */
+var _ORD_ST={projeto:0,planejamento:0,pendente:0,pcp:1,compras:2,servico_ext:2,
+  serra:3,laser:3,usinagem:4,usinagem_int:4,solda:5,acabamento:6,sep_cq:7,
+  mont_mec:8,painel:9,mont_el:9,testes:10,fat:10,
+  aguardando:11,em_desmontagem_carga:11,carregada:11,desmontagem:11,modificacoes:11,entregue:12};
+var _ORD_CHIP={engenharia:0,cadastro:1,pcp:1,compras:2,
+  serra:3,serra_int:3,serra_tubo:3,laser:3,cortelaser:3,
+  usinagem:4,solda:5,acab:6,acabamento:6,insp:7,inspecao:7,
+  mmec:8,mont_mec:8,mel:9,mont_el:9,testes:10,fat:10};
+function _jaPassouChip(r,chip){
+  var os=_ORD_ST[r.status], oc=_ORD_CHIP[chip];
+  if(os===undefined||oc===undefined)return false;
+  return os>oc;
+}
 function _phaseReachable(r,chip){
   var allowed=_CK_STATUSES[chip];
   if(!allowed)return true;
@@ -618,7 +641,7 @@ function _computeFasesVencendo(){
     for(var f=0;f<FASE_SEQ.length;f++){
       var fase=FASE_SEQ[f],fimV=r[fase.fim];
       if(fOk.indexOf(fase.chip)>=0)continue;
-      if(_allDoneSt.indexOf(r.status)>=0||(_cSI>0&&f<_cSI))continue;
+      if(_allDoneSt.indexOf(r.status)>=0||_jaPassouChip(r,fase.chip))continue;
       if(!fimV||_isOk(fimV))continue;
       var d=parseDate2(fimV);if(!d)continue;
       d.setHours(0,0,0,0);
@@ -670,6 +693,7 @@ function _rondaBuildFila(chip){
   for(var i=0;i<rows.length;i++){
     var r=rows[i];
     if(r.status==='entregue'||r.status==='pendente'||r.status==='planejamento')continue;
+    if(_jaPassouChip(r,s.chip))continue;/* já passou desta etapa */
     var ini=r[s.ini]||'',fim=r[s.fim]||'';
     var fimD=parseDate2(fim);
     var _rdKey=_rondaDoneKey(r.projeto,s.chip);
