@@ -600,12 +600,12 @@ function _faseFeita(r,chip){
    `reprogramado` fica fora: é marca paralela, não posição de fluxo. */
 var _ORD_ST={projeto:0,planejamento:0,pendente:0,pcp:1,compras:2,servico_ext:2,
   serra:3,laser:3,usinagem:4,usinagem_int:4,solda:5,acabamento:6,sep_cq:7,
-  mont_mec:8,painel:9,mont_el:9,testes:10,fat:10,
-  aguardando:11,em_desmontagem_carga:11,carregada:11,desmontagem:11,modificacoes:11,entregue:12};
+  mont_mec:8,painel:9,mont_el:9,testes:10,fat:11,
+  aguardando:12,em_desmontagem_carga:12,carregada:12,desmontagem:12,modificacoes:12,entregue:13};
 var _ORD_CHIP={engenharia:0,cadastro:1,pcp:1,compras:2,
   serra:3,serra_int:3,serra_tubo:3,laser:3,cortelaser:3,
   usinagem:4,solda:5,acab:6,acabamento:6,insp:7,inspecao:7,
-  mmec:8,mont_mec:8,mel:9,mont_el:9,testes:10,fat:10};
+  mmec:8,mont_mec:8,mel:9,mont_el:9,testes:10,fat:11};
 function _jaPassouChip(r,chip){
   var os=_ORD_ST[r.status], oc=_ORD_CHIP[chip];
   if(os===undefined||oc===undefined)return false;
