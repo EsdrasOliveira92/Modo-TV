@@ -48,7 +48,7 @@ var _lastPublishedAt = '';
 
 var MESES_MAP={jan:0,fev:1,mar:2,abr:3,mai:4,jun:5,jul:6,ago:7,set:8,out:9,nov:10,dez:11};
 var _WORK_DAY_H={0:0,1:9,2:9,3:9,4:9,5:8,6:0};
-var PROC_LABELS={pcp:'PCP / Cadastro',serra:'Serra',usinagem:'Usinagem',solda:'Solda',acabamento:'Acabamento',inspecao:'Inspeção / C.Q',mont_mec:'Mont. Mecânica',mont_el:'Mont. Elétrica',testes:'Testes / FAT'};
+var PROC_LABELS={pcp:'PCP / Cadastro',serra:'Serra',usinagem:'Usinagem',solda:'Solda',acabamento:'Acabamento',inspecao:'Separação Logística',mont_mec:'Mont. Mecânica',mont_el:'Mont. Elétrica',testes:'Testes / FAT'};
 var PROC_KEYS=['pcp','serra','usinagem','solda','acabamento','inspecao','mont_mec','mont_el','testes'];
 var _CK_STATUSES={
   /* PORQUÊ ESTA LINHA É OBRIGATÓRIA: _phaseReachable retorna TRUE quando o chip não
@@ -81,7 +81,7 @@ var _RONDA_SETORES=[
   {chip:'usinagem',   ini:'usi_inic',     fim:'usi_fim',    lbl:'Usinagem (Serra+Fresa)',  icon:'🔩', color:'#0e7490'},
   {chip:'solda',      ini:'solda_inic',   fim:'solda_fim',  lbl:'Solda',                   icon:'🔥', color:'#fb923c'},
   {chip:'acabamento', ini:'acab_inic',    fim:'acab_fim',   lbl:'Acabamento',              icon:'✨', color:'#facc15'},
-  {chip:'inspecao',   ini:'insp_inic',    fim:'insp_fim',   lbl:'Inspeção / Sep. CQ',      icon:'🔍', color:'#34d399'},
+  {chip:'inspecao',   ini:'insp_inic',    fim:'insp_fim',   lbl:'Separação Logística',      icon:'🔍', color:'#34d399'},
   {chip:'mont_mec',   ini:'mmec_inic',    fim:'mmec_fim',   lbl:'Montagem Mecânica',       icon:'⚙️', color:'#f472b6'},
   {chip:'mont_el',    ini:'mel_inic',     fim:'mel_fim',    lbl:'Montagem Elétrica',       icon:'⚡', color:'#eab308'},
   {chip:'testes',     ini:'teste_inic',   fim:'teste_fim',  lbl:'Testes',                  icon:'🧪', color:'#a855f7'},
@@ -104,7 +104,7 @@ var _TV_CARGA_SETORES=[
   {l:'Usinagem',fi:'usi_inic',ff:'usi_fim',ck:'usinagem',c:'#2563eb',icon:'🔩'},
   {l:'Solda',fi:'solda_inic',ff:'solda_fim',ck:'solda',c:'#c2410c',icon:'🔥'},
   {l:'Acabamento',fi:'acab_inic',ff:'acab_fim',ck:'acabamento',c:'#a16207',icon:'✨'},
-  {l:'Inspeção / CQ',fi:'insp_inic',ff:'insp_fim',ck:'inspecao',c:'#059669',icon:'🔍'},
+  {l:'Separação Logística',fi:'insp_inic',ff:'insp_fim',ck:'inspecao',c:'#059669',icon:'🔍'},
   {l:'Mont. Mecânica',fi:'mmec_inic',ff:'mmec_fim',ck:'mont_mec',c:'#db2777',icon:'⚙️'},
   {l:'Mont. Elétrica',fi:'mel_inic',ff:'mel_fim',ck:'mont_el',c:'#ca8a04',icon:'⚡'},
   {l:'Testes',fi:'teste_inic',ff:'teste_fim',ck:'testes',c:'#7c3aed',icon:'🧪'}
@@ -116,7 +116,7 @@ var _TV_HORAS_SETORES=[
   {label:'Usinagem',    fi:'usi_inic', ff:'usi_fim',  hk:'usinagem', capKey:'usinagem', c:'#2563eb',icon:'🔩'},
   {label:'Solda',       fi:'solda_inic',ff:'solda_fim',hk:'solda',   capKey:'solda',    c:'#c2410c',icon:'🔥'},
   {label:'Acabamento',  fi:'acab_inic',ff:'acab_fim', hk:'acabamento',capKey:'acab',    c:'#a16207',icon:'✨'},
-  {label:'Inspeção/CQ', fi:'insp_inic',ff:'insp_fim', hk:'inspecao', capKey:'insp',     c:'#059669',icon:'🔍'},
+  {label:'Separação Logística', fi:'insp_inic',ff:'insp_fim', hk:'inspecao', capKey:'insp',     c:'#059669',icon:'🔍'},
   {label:'Mont.Mecânica',fi:'mmec_inic',ff:'mmec_fim',hk:'mont_mec', capKey:'mmec',     c:'#db2777',icon:'⚙️'},
   {label:'Mont.Elétrica',fi:'mel_inic', ff:'mel_fim', hk:'mont_el',  capKey:'mel',      c:'#ca8a04',icon:'⚡'}
 ];
@@ -547,7 +547,7 @@ function _tvFunil(){
     {l:'PCP',st:['pcp'],c:_TVC.purple},{l:'Compras',st:['compras'],c:'#4f46e5'},
     {l:'Corte/Serra/Laser',st:['laser'],c:_TVC.cyan},{l:'Usinagem',st:['usinagem'],c:_TVC.blue},
     {l:'Solda',st:['solda'],c:_TVC.orange},{l:'Acabamento',st:['acabamento'],c:'#ca8a04'},
-    {l:'Inspeção/CQ',st:['sep_cq','inspecao'],c:_TVC.green},{l:'Montagem',st:['mont_mec','mont_el'],c:_TVC.pink},
+    {l:'Separação Logística',st:['sep_cq','inspecao'],c:_TVC.green},{l:'Montagem',st:['mont_mec','mont_el'],c:_TVC.pink},
     {l:'Testes/FAT',st:['testes','fat'],c:_TVC.purple},{l:'Finalização',st:['aguardando','em_desmontagem_carga','carregada'],c:_TVC.teal}
   ];
   var cont=etapas.map(function(e){var n=0;for(var i=0;i<rows.length;i++){if(e.st.indexOf(rows[i].status)>=0)n++;}return {l:e.l,c:e.c,n:n};});
