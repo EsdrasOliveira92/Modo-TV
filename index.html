@@ -382,7 +382,7 @@ function _tvCargaHorasSetor(){
     var cap=(typeof _ganttCap!=='undefined'&&_ganttCap[s.capKey])||1;
     var capH=cap*_WEEK_H_PER_WORKER;
     /* 1. Coletar barras (mesmos filtros da versão em lista, sem alteração de regra) */
-    var bars=[];
+    var bars=[], _backlogTV=[];/* fases vencidas: distribuídas por capacidade adiante */
     for(var i=0;i<rows.length;i++){
       var r=rows[i];
       if(['pendente','planejamento','entregue'].indexOf(r.status)>=0)continue;
@@ -394,10 +394,16 @@ function _tvCargaHorasSetor(){
       if(!ds||!de)continue;
       ds.setHours(0,0,0,0);de.setHours(0,0,0,0);
       if(de<ds)de=new Date(ds.getTime()+864e5);
-      if(de<hoje)continue;
       var horas=0;
       try{horas=_getHorasTotal(r)[s.hk]||0;}catch(e){}
       if(horas<=0)continue;/* sem horas cadastradas na aba Horas → não conta (evita número fictício) */
+      /* ═══ 18/09/2026 — ATRASO ACUMULADO ENTRA NO GRÁFICO (mesma regra do artefato) ═══
+         Antes: if(de<hoje)continue; — fase vencida sumia do gráfico e o setor parecia
+         dentro da capacidade mesmo com pilha de atraso. A Serra mostrava "9 projetos em
+         atraso" na lista e nenhum pico no gráfico de horas — foi o que o Esdras apontou.
+         Agora o vencido entra numa FILA distribuída depois pela capacidade real, semana
+         a semana, igual à aba Carga Horária do artefato. */
+      if(de<hoje){_backlogTV.push({horas:Math.round(horas*10)/10});continue;}
       bars.push({cli:r.modelo||'',proj:r.projeto,s:ds,e:de,horas:Math.round(horas*10)/10});
     }
     /* 2. Distribuir as horas de cada projeto pelas semanas úteis que ele ocupa */
@@ -421,6 +427,41 @@ function _tvCargaHorasSetor(){
         tc.setDate(tc.getDate()+1);
       }
     });
+    /* ═══ 18/09/2026 — DISTRIBUIR O BACKLOG PELA CAPACIDADE REAL ═══
+       Preenche semana a semana a partir de hoje, só com o que sobra da capacidade
+       depois do trabalho já programado. O atraso empurra as semanas seguintes em vez
+       de virar um pico impossível numa só. */
+    if(_backlogTV.length){
+      var _totB=0;_backlogTV.forEach(function(b){_totB+=(b.horas||0);});
+      if(_totB>0){
+        var _wc=new Date(hoje);var _dy0=_wc.getDay();
+        _wc.setDate(_wc.getDate()+(_dy0===0?-6:1-_dy0));_wc.setHours(0,0,0,0);
+        var _rest=_totB,_g=0;
+        while(_rest>0.05&&_g<104){
+          _g++;
+          var _wk=_wc.getFullYear()+'-'+('0'+(_wc.getMonth()+1)).slice(-2)+'-'+('0'+_wc.getDate()).slice(-2);
+          if(!uwMap[_wk])uwMap[_wk]={h:0,projs:[]};
+          var _livre=capH-uwMap[_wk].h;
+          if(_livre>0.05){
+            var _al=Math.min(_livre,_rest);
+            uwMap[_wk].h+=_al;
+            uwMap[_wk].backlogH=(uwMap[_wk].backlogH||0)+_al;
+            uwMap[_wk].projs.push({cli:'\u26a0 Atraso acumulado',h:Math.round(_al*10)/10});
+            _rest-=_al;
+          }
+          _wc.setDate(_wc.getDate()+7);
+        }
+        if(_rest>0.05){
+          var _w0=new Date(hoje);var _d0=_w0.getDay();
+          _w0.setDate(_w0.getDate()+(_d0===0?-6:1-_d0));_w0.setHours(0,0,0,0);
+          var _wk0=_w0.getFullYear()+'-'+('0'+(_w0.getMonth()+1)).slice(-2)+'-'+('0'+_w0.getDate()).slice(-2);
+          if(!uwMap[_wk0])uwMap[_wk0]={h:0,projs:[]};
+          uwMap[_wk0].h+=_rest;
+          uwMap[_wk0].backlogH=(uwMap[_wk0].backlogH||0)+_rest;
+          uwMap[_wk0].projs.push({cli:'\u26a0 Atraso acumulado (excedente)',h:Math.round(_rest*10)/10});
+        }
+      }
+    }
     var uwKeys=Object.keys(uwMap).sort().slice(0,14);/* TV: 14 semanas cabem sem apertar */
     var maxUW=0,overWks=0,peakH=0,totalDemand=0;
     uwKeys.forEach(function(k){var wh=uwMap[k].h;if(wh>maxUW)maxUW=wh;if(wh>capH)overWks++;if(wh>peakH)peakH=wh;totalDemand+=wh;});
