@@ -285,7 +285,7 @@ function _tvCargaHoraria(){
       if(_rondaDoneSet&&_rondaDoneSet[r.projeto+'\u00b7'+s.ck])continue;
       var di=parseDate2(r[s.fi]),df=parseDate2(r[s.ff]);
       if(!df)continue;
-      lista.push({cli:r.cliente,proj:r.projeto,mod:r.modelo,ini:r[s.fi],fim:r[s.ff],di:di,df:df,dias:Math.round((df-hoje)/864e5)});
+      lista.push({cli:r.modelo||'',proj:r.projeto,mod:r.modelo,ini:r[s.fi],fim:r[s.ff],di:di,df:df,dias:Math.round((df-hoje)/864e5)});
     }
     lista.sort(function(a,b){return a.df-b.df;});
     var atras=lista.filter(function(x){return x.df<hoje;}).length;
@@ -314,7 +314,7 @@ function _tvCargaHoraria(){
         /* Data já passada: a fase não é "próxima a vencer". Não entra na lista e
            não vira atraso — só alimenta o contador de fases sem marcação. */
         if(pdias<0){venctoSemMarca++;continue;}
-        proximos.push({cli:pr.cliente,proj:pr.projeto,fim:pr[s.ff],df:pdf,dias:pdias});
+        proximos.push({cli:pr.modelo||'',proj:pr.projeto,fim:pr[s.ff],df:pdf,dias:pdias});
       }
       proximos.sort(function(a,b){return a.df-b.df;});
     }
@@ -398,7 +398,7 @@ function _tvCargaHorasSetor(){
       var horas=0;
       try{horas=_getHorasTotal(r)[s.hk]||0;}catch(e){}
       if(horas<=0)continue;/* sem horas cadastradas na aba Horas → não conta (evita número fictício) */
-      bars.push({cli:r.cliente,proj:r.projeto,s:ds,e:de,horas:Math.round(horas*10)/10});
+      bars.push({cli:r.modelo||'',proj:r.projeto,s:ds,e:de,horas:Math.round(horas*10)/10});
     }
     /* 2. Distribuir as horas de cada projeto pelas semanas úteis que ele ocupa */
     var uwMap={};
@@ -503,7 +503,7 @@ function _tvEntregas(){
     if(['pendente','planejamento','entregue'].indexOf(r.status)>=0)continue;
     var mf=parseDate2(r.maq_final);
     if(!mf||mf<hoje)continue;
-    lista.push({cli:r.cliente,proj:r.projeto,mod:r.modelo,mf:mf,mfStr:r.maq_final,dias:Math.round((mf-hoje)/864e5)});
+    lista.push({cli:r.modelo||'',proj:r.projeto,mod:r.modelo,mf:mf,mfStr:r.maq_final,dias:Math.round((mf-hoje)/864e5)});
   }
   lista.sort(function(a,b){return a.mf-b.mf;});
   if(lista.length===0)return '<div style="height:100%;display:flex;align-items:center;justify-content:center;font-size:24px;color:'+_TVC.txt2+'">Nenhuma entrega futura programada</div>';
@@ -533,7 +533,7 @@ function _tvAlertas(){
     h+='<div style="background:'+_TVC.card+';border:1px solid '+_TVC.brd+';border-top:5px solid '+cores[d]+';border-radius:16px;padding:16px;display:flex;flex-direction:column;box-shadow:0 1px 3px rgba(0,0,0,.05)">';
     h+='<div style="text-align:center;margin-bottom:12px"><div style="font-size:44px;font-weight:900;color:'+cores[d]+'">'+byD[d].length+'</div><div style="font-size:14px;font-weight:900;color:'+cores[d]+';letter-spacing:1px">'+labels[d]+'</div></div>';
     var lim=Math.min(6,byD[d].length);
-    for(var k=0;k<lim;k++){var f=byD[d][k];h+='<div style="font-size:13px;color:'+_TVC.txt2+';padding:6px 0;border-bottom:1px solid '+_TVC.brd+'"><div style="font-weight:800;color:'+_TVC.txt+'">'+esc((f.cliente||f.cli||'').substring(0,16))+'</div><div style="font-size:11px;color:'+_TVC.txt3+'">'+esc(f.fase||f.faseLabel||'')+'</div></div>';}
+    for(var k=0;k<lim;k++){var f=byD[d][k];h+='<div style="font-size:13px;color:'+_TVC.txt2+';padding:6px 0;border-bottom:1px solid '+_TVC.brd+'"><div style="font-weight:800;color:'+_TVC.txt+'">'+esc((f.modelo||f.cli||'').substring(0,16))+'</div><div style="font-size:11px;color:'+_TVC.txt3+'">'+esc(f.fase||f.faseLabel||'')+'</div></div>';}
     if(byD[d].length>6)h+='<div style="font-size:11px;color:'+_TVC.txt3+';margin-top:6px">+ '+(byD[d].length-6)+'</div>';
     h+='</div>';
   });
@@ -647,7 +647,7 @@ function _computeFasesVencendo(){
       var d=parseDate2(fimV);if(!d)continue;
       d.setHours(0,0,0,0);
       if(d>=hoje&&d<=limite){
-        out.push({idx:i,proj:r.projeto,cli:r.cliente,fase:fase.lbl,fim:fimV,dias:Math.round((d-hoje)/864e5)});
+        out.push({idx:i,proj:r.projeto,cli:r.modelo||'',fase:fase.lbl,fim:fimV,dias:Math.round((d-hoje)/864e5)});
       }
     }
   }
@@ -714,7 +714,7 @@ function _rondaBuildFila(chip){
       incluir=true;
     }
     if(!incluir)continue;
-    out.push({idx:i,proj:r.projeto,cli:r.cliente||'',modelo:r.modelo||'',ini:ini,fim:fim,fimD:fimD,diasFim:diasFim,concluida:concluida,status:r.status||''});
+    out.push({idx:i,proj:r.projeto,cli:r.modelo||'',modelo:r.modelo||'',ini:ini,fim:fim,fimD:fimD,diasFim:diasFim,concluida:concluida,status:r.status||''});
   }
   out.sort(function(a,b){
     if(a.concluida!==b.concluida)return a.concluida?1:-1;
