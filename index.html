@@ -279,7 +279,7 @@ function _tvCargaHoraria(){
     var lista=[];
     for(var i=0;i<rows.length;i++){
       var r=rows[i];
-      if(['pendente','planejamento','entregue'].indexOf(r.status)>=0)continue;
+      if(['pendente','planejamento','entregue','aguardando','em_desmontagem_carga','carregada'].indexOf(r.status)>=0)continue;
       if(_jaPassouChip(r,s.ck))continue;/* já passou desta etapa — os que ainda não chegaram ficam */
       if(r[s.ff]==='ok'||_faseFeita(r,s.ck))continue;
       if(_rondaDoneSet&&_rondaDoneSet[r.projeto+'\u00b7'+s.ck])continue;
@@ -303,7 +303,7 @@ function _tvCargaHoraria(){
     if(lista.length===0){
       for(var pi=0;pi<rows.length;pi++){
         var pr=rows[pi];
-        if(['pendente','planejamento','entregue'].indexOf(pr.status)>=0)continue;
+        if(['pendente','planejamento','entregue','aguardando','em_desmontagem_carga','carregada'].indexOf(pr.status)>=0)continue;
         if(_jaPassouChip(pr,s.ck))continue;/* mesma regra da lista principal */
         if(pr[s.ff]==='ok'||_faseFeita(pr,s.ck))continue;
         if(_rondaDoneSet&&_rondaDoneSet[pr.projeto+'\u00b7'+s.ck])continue;
@@ -369,6 +369,12 @@ function _tvCargaHoraria(){
 }
 
 function _tvCargaHorasSetor(){
+  /* ═══ 02/10/2026 — ALINHADO COM A ABA CARGA HORÁRIA DO ARTEFATO ═══
+     O TV contava carga de máquinas JÁ PRONTAS: projetos em 'aguardando',
+     'em_desmontagem_carga' e 'carregada' saíram da produção mas mantêm datas de fase
+     preenchidas, então entravam no cálculo e inflavam a carga de todos os setores
+     (ex.: SIMAS 11202, finalizada em 24/07, ainda somando horas em Solda e Montagem).
+     O artefato já os excluía — agora os dois usam o mesmo filtro. */
   /* ═══ CARGA HORÁRIA POR SETOR — GRÁFICO DE BARRAS SEMANAIS (15/08/2026) ═══
      Porta para o Modo TV a mesma leitura da aba Carga Horária do artefato:
      horas distribuídas por semana ISO, linha tracejada de capacidade, barra
@@ -385,7 +391,7 @@ function _tvCargaHorasSetor(){
     var bars=[], _backlogTV=[];/* fases vencidas: distribuídas por capacidade adiante */
     for(var i=0;i<rows.length;i++){
       var r=rows[i];
-      if(['pendente','planejamento','entregue'].indexOf(r.status)>=0)continue;
+      if(['pendente','planejamento','entregue','aguardando','em_desmontagem_carga','carregada'].indexOf(r.status)>=0)continue;
       if(r[s.fi]==='ok'||r[s.ff]==='ok')continue;
       if(_faseFeita(r,s.hk))continue;
       if(_rondaDoneSet&&_rondaDoneSet[r.projeto+'\u00b7'+s.hk])continue;
