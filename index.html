@@ -626,7 +626,10 @@ function _tvActiveRows(){return rows.filter(function(r){return r.status!=='pende
    como concluída gravava 'laser', e o card da Serra procurava 'serra' — nunca
    achava, e o projeto ficava listado para sempre, por mais que fosse validado.
    Este resolvedor aceita os dois chips para a mesma fase física de corte. */
-var _FASE_ALIAS={serra:['serra','laser'],serra_int:['serra_int'],serra_tubo:['serra_tubo'],engenharia:['engenharia','cadastro']};/* Cadastro concluído implica engenharia entregue — evita repetir o órfão do chip 'serra' */
+var _FASE_ALIAS={serra:['serra','laser'],serra_int:['serra_int'],serra_tubo:['serra_tubo'],engenharia:['engenharia','cadastro'],
+  /* 03/10/2026 — PCP: o painel grava a conclusão do cadastro como 'cadastro', mas a Carga Horária consulta a chave 'pcp'.
+     Sem este apelido, TODO cadastro concluído continuava contando como carga do PCP (43 projetos contados, 22 reais; 26 'vencidos', 5 reais). */
+  pcp:['pcp','cadastro']};/* Cadastro concluído implica engenharia entregue — evita repetir o órfão do chip 'serra' */
 function _faseFeita(r,chip){
   if(!r)return false;
   var cks=_FASE_ALIAS[chip]||[chip];
