@@ -877,6 +877,22 @@ document.addEventListener('keydown',function(e){
   else if(e.key===' '){e.preventDefault();_tvTogglePlay();}
 });
 
+
+/* ═══ 07/10/2026 — ALERTA DE DADO VELHO ═══
+   Antes o totem mostrava "Publicado: ..." sem avisar quando ficava velho: se ninguém publicasse, o chão de
+   fábrica via informação vencida sem saber. Agora: até 24 h normal; 24–48 h âmbar; acima de 48 h vermelho. */
+function _tvIdade(){
+  try{
+    var pi=document.getElementById('tv-pubinfo');if(!pi||!_lastPublishedAt)return;
+    var m=/(\d{2})\/(\d{2})\/(\d{4})[^\d]*(\d{2}):(\d{2})/.exec(_lastPublishedAt);if(!m)return;
+    var pub=new Date(+m[3],+m[2]-1,+m[1],+m[4],+m[5]),h=(Date.now()-pub.getTime())/36e5;
+    if(h<24){pi.textContent='Publicado: '+_lastPublishedAt;pi.style.color='';pi.style.fontWeight='';return;}
+    var dias=Math.floor(h/24),txt=h<48?('⚠ Dados de há '+Math.round(h)+' h — publicar no painel'):('⛔ DADOS DESATUALIZADOS há '+dias+' dias — publicar no painel');
+    pi.textContent=txt+' (último: '+_lastPublishedAt+')';
+    pi.style.color=h<48?'#f59e0b':'#ef4444';pi.style.fontWeight='800';
+  }catch(e){}
+}
+setInterval(_tvIdade,5*60*1000);
 async function _carregarDados(silencioso){
   try{
     var r=await fetch(DADOS_URL+(DADOS_URL.indexOf('?')>=0?'&':'?')+'_ts='+Date.now());
@@ -905,7 +921,7 @@ async function _carregarDados(silencioso){
     }
     _lastPublishedAt=data.publishedAt||'';
     var pi=document.getElementById('tv-pubinfo');
-    if(pi&&_lastPublishedAt)pi.textContent='Publicado: '+_lastPublishedAt;
+    if(pi&&_lastPublishedAt)pi.textContent='Publicado: '+_lastPublishedAt;_tvIdade();
     if(!silencioso)_tvRender(true);
     else _tvRender(true);
     return true;
