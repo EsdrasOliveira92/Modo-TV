@@ -33,6 +33,7 @@
    ═══════════════════════════════════════════════════════════════ */
 
 /* ⚙️ CONFIGURAÇÃO — troque pela URL RAW do seu arquivo no GitHub após o setup */
+/* TV build 2026.10.21-3: +3 painéis (Máquinas por Mês, Média de Atraso, Previsão) — sem nome de cliente */
 var DADOS_URL = 'https://raw.githubusercontent.com/EsdrasOliveira92/Modo-TV/refs/heads/main/dados_tv.json';
 var POLL_MS = 60000; /* verifica se o arquivo mudou a cada 60s (troca é manual, 2-3x/dia) */
 
@@ -128,7 +129,10 @@ var _TV_PANELS=[
   {id:'cargahoras',title:'Carga Horária por Setor',icon:'📈'},
   {id:'ronda',    title:'Ronda da Semana',       icon:'🏃'},
   {id:'entregas', title:'Entregas Próximas',     icon:'🚚'},
-  {id:'alertas',  title:'Alertas de Vencimento', icon:'⏰'}
+  {id:'alertas',  title:'Alertas de Vencimento', icon:'⏰'},
+  {id:'entregasMes', title:'Máquinas por Mês de Entrega', icon:'📊'},
+  {id:'mediaAtraso', title:'Média de Atraso por Mês', icon:'📉'},
+  {id:'prevMeses',   title:'Previsão de Entregas — Mês Atual e Próximo', icon:'📅'}
 ];
 
 function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
@@ -796,6 +800,171 @@ function _tvRenderDots(){var el=document.getElementById('tv-dots');if(!el)return
 function _tvUpdateSpeed(){var el=document.getElementById('tv-speed');if(el)el.textContent=_tv.speed+'s';}
 function _tvSpeed(delta){_tv.speed=Math.max(4,Math.min(40,_tv.speed+delta));_tvUpdateSpeed();if(_tv.playing){_tvStopTimer();_tvStartTimer();}}
 function _tvTogglePlay(){_tv.playing=!_tv.playing;var b=document.getElementById('tv-playbtn');if(b)b.textContent=_tv.playing?'⏸':'▶';if(_tv.playing){_tvStartTimer();}else{_tvStopTimer();}}
+/* ═══ TV — GRÁFICOS IGUAIS AOS DA APRESENTAÇÃO + PREVISÃO DE ENTREGAS (21/10/2026) ═══
+   Regras: (1) "vr" = todas as máquinas exceto 'pendente' (inclui já entregues), igual à aba Apresentação.
+           (2) O mês vem da data efetiva (entrega real > modificação > reprogramação > Máq. Final).
+           (3) O Modo TV NUNCA exibe nome de cliente — só nº do projeto e modelo.
+   No painel usa _saldoDias/_getEffectiveDate nativos; no totem usa as versões abaixo (mesma lógica). */
+var _TVX_MES=['JAN','FEV','MAR','ABR','MAI','JUN','JUL','AGO','SET','OUT','NOV','DEZ'];
+var _TVX_MES_LONGO=['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+var _TVX_CORES=['#6366f1','#8b5cf6','#a855f7','#d946ef','#ec4899','#f43f5e','#fb923c','#f59e0b','#eab308','#84cc16','#22c55e','#14b8a6'];
+var _TVX_ST={projeto:'Engenharia',pcp:'PCP',compras:'Compras',serra:'Serra',laser:'Laser',usinagem:'Usinagem',solda:'Solda',acabamento:'Acabamento',sep_cq:'Sep. Logística',mont_mec:'Mont. Mecânica',mont_el:'Mont. Elétrica',testes:'Testes',fat:'FAT',modificacoes:'Modificações',servico_ext:'Serviço Externo',aguardando:'Concluída',carregada:'Carregada',em_desmontagem_carga:'Em desmontagem',entregue:'Entregue'};
+function _tvxNum(t){var m=/([+-]?)\s*(\d+)/.exec(String(t==null?'':t));if(!m)return null;return (m[1]==='-'?-1:1)*parseInt(m[2],10);}
+function _tvxCalc(mf,en){var d1=parseDate2(mf),d2=parseDate2(en);if(!d1||!d2)return '';var diff=Math.round((d2-d1)/864e5);if(diff<0)return diff+' dias em atraso';if(diff>0)return '+'+diff+' dias';return 'No prazo';}
+function _tvxSaldo(r){
+  if(typeof _saldoDias==='function')return _saldoDias(r);
+  if(!r)return null;
+  var a=String(r.atraso||'').trim();
+  if(a==='No prazo')return {v:0};
+  var n=_tvxNum(a);
+  if(n!==null)return {v:n};
+  var num=function(t){return t==='No prazo'?0:_tvxNum(t);};
+  if(a==='Reprogramado'){var c=num(String(r.atraso_cong||'').trim());if(c===null)c=num(_tvxCalc(r.maq_final,r.entrega));return c===null?null:{v:c};}
+  if(['entregue','aguardando','carregada','em_desmontagem_carga'].indexOf(r.status)>=0||a==='Entregue'||a==='Concluída'||a==='Carregada'||a==='Em desmontagem'){var f=num(_tvxCalc(r.maq_final,r.entrega));return f===null?null:{v:f};}
+  return null;
+}
+function _tvxEff(r){
+  if(typeof _getEffectiveDate==='function')return _getEffectiveDate(r);
+  if(r.status==='entregue'&&r.entregue_em){var d0=parseDate2(r.entregue_em);if(d0){d0.setHours(0,0,0,0);return d0;}}
+  if(r.mod_entrega){var d2=parseDate2(r.mod_entrega);if(d2){d2.setHours(0,0,0,0);return d2;}}
+  if(r.reprog){var d3=parseDate2(r.reprog);if(d3){d3.setHours(0,0,0,0);return d3;}}
+  return parseDate2(r.maq_final);
+}
+function _tvxAno(){return new Date().getFullYear();}
+function _tvxVr(){return rows.filter(function(r){return r.status!=='pendente';});}
+function _tvxCorAtraso(v){
+  var C=_TVC;if(v===null||v===undefined)return 'rgba(0,0,0,.08)';
+  var a=Math.abs(v);return v>0?C.green:a<=5?C.green:a<=15?C.cyan:a<=30?C.amber:a<=50?C.orange:C.red;
+}
+function _tvxPad(n){return ('0'+n).slice(-2);}
+/* Dados do gráfico 1: máquinas por mês de entrega (todas exceto pendentes, pela data efetiva) */
+function _tvxDadosMaqMes(){
+  var ano=_tvxAno(),cont=[];for(var m=0;m<12;m++)cont.push(0);
+  var vr=_tvxVr();
+  for(var i=0;i<vr.length;i++){var d=_tvxEff(vr[i]);if(d&&d.getFullYear()===ano)cont[d.getMonth()]++;}
+  return {ano:ano,cont:cont};
+}
+/* Dados do gráfico 2: média de atraso por mês (mesma regra da Apresentação) */
+function _tvxDadosAtraso(){
+  var ano=_tvxAno(),b=[];for(var m=0;m<12;m++)b.push([]);
+  var vr=_tvxVr();
+  for(var i=0;i<vr.length;i++){
+    var r=vr[i],d=_tvxEff(r);
+    if(!d||d.getFullYear()!==ano)continue;
+    var sd=_tvxSaldo(r);if(!sd)continue;
+    /* ignora entregues com as 3 datas fictícias iguais (import antigo) — geram saldo 0 falso */
+    if(r.status==='entregue'&&r.entregue_em&&r.maq_final&&r.entrega&&r.entregue_em===r.maq_final&&r.maq_final===r.entrega&&/^15\/\d{2}\/2026$/.test(r.entregue_em))continue;
+    b[d.getMonth()].push(sd.v);
+  }
+  var avgs=[],tem=false;
+  for(var k=0;k<12;k++){
+    if(b[k].length){var s=0;for(var j=0;j<b[k].length;j++)s+=b[k][j];avgs.push({v:Math.round(s/b[k].length),n:b[k].length});tem=true;}
+    else avgs.push({v:null,n:0});
+  }
+  var com=avgs.filter(function(a){return a.v!==null;});
+  var geral=com.length?Math.round(com.reduce(function(x,y){return x+y.v;},0)/com.length):0;
+  return {ano:ano,avgs:avgs,geral:geral,tem:tem};
+}
+/* ═══ SLIDE: MÁQUINAS POR MÊS DE ENTREGA ═══ */
+function _tvEntregasMes(){
+  var C=_TVC,D=_tvxDadosMaqMes(),mesAtual=new Date().getMonth();
+  var maxN=Math.max.apply(null,D.cont)||1,total=D.cont.reduce(function(a,b){return a+b;},0),bH=430;
+  var h='<div style="height:100%;display:flex;flex-direction:column;padding:0 8px"><div style="background:'+C.card+';border:1px solid '+C.brd+';border-radius:18px;padding:28px 32px;flex:1;box-shadow:0 1px 3px rgba(0,0,0,.05)">';
+  h+='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:22px"><div style="font-size:22px;font-weight:900;color:'+C.txt+'">📊 Máquinas por Mês de Entrega — '+D.ano+'</div>';
+  h+='<span style="font-size:16px;font-weight:800;color:'+C.cyan+';background:'+C.cyan+'15;border:2px solid '+C.cyan+'44;padding:6px 18px;border-radius:24px">'+total+' máquinas no ano</span></div>';
+  h+='<div style="display:flex;align-items:flex-end;gap:12px;height:'+bH+'px">';
+  for(var m=0;m<12;m++){
+    var n=D.cont[m],bh=Math.round(n/maxN*(bH-50));if(n>0&&bh<12)bh=12;
+    var cor=_TVX_CORES[m],atual=(m===mesAtual);
+    h+='<div style="flex:1;display:flex;flex-direction:column;align-items:center">';
+    h+=n>0?'<div style="font-size:24px;font-weight:900;color:'+cor+';margin-bottom:6px">'+n+'</div>':'<div style="height:36px"></div>';
+    h+='<div style="width:100%;height:'+bh+'px;background:'+(n>0?cor:'rgba(0,0,0,.06)')+';border:'+(atual?'3px solid '+C.txt:'1px solid '+(n>0?cor+'66':'rgba(0,0,0,.05)'))+';border-radius:10px 10px 0 0;box-shadow:'+(atual&&n>0?'0 0 16px '+cor+'88':'none')+'"></div>';
+    h+='<div style="font-size:14px;font-weight:'+(atual?'900':'700')+';color:'+(atual?C.txt:C.txt2)+';margin-top:8px;letter-spacing:1px">'+_TVX_MES[m]+'</div></div>';
+  }
+  h+='</div><div style="margin-top:16px;font-size:12px;color:'+C.txt3+';text-align:center">Inclui máquinas já entregues · mês pela data de entrega (real, reprogramada ou Máq. Finalizada) · mês atual com contorno escuro</div>';
+  h+='</div></div>';
+  return h;
+}
+/* ═══ SLIDE: MÉDIA DE ATRASO POR MÊS ═══ */
+function _tvMediaAtraso(){
+  var C=_TVC,D=_tvxDadosAtraso(),mesAtual=new Date().getMonth(),bH=430;
+  var vals=D.avgs.filter(function(a){return a.v!==null;}).map(function(a){return Math.abs(a.v);});
+  var maxV=Math.max.apply(null,vals)||1;
+  var colGeral=Math.abs(D.geral)<=5?C.green:Math.abs(D.geral)<=20?C.amber:C.red;
+  var h='<div style="height:100%;display:flex;flex-direction:column;padding:0 8px"><div style="background:'+C.card+';border:1px solid '+C.brd+';border-radius:18px;padding:28px 32px;flex:1;box-shadow:0 1px 3px rgba(0,0,0,.05)">';
+  h+='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px"><div style="font-size:22px;font-weight:900;color:'+C.txt+'">📉 Média de Atraso por Mês — '+D.ano+' <span style="font-size:13px;font-weight:600;color:'+C.txt3+'">(em dias)</span></div>';
+  h+='<span style="font-size:16px;font-weight:800;color:'+colGeral+';background:'+colGeral+'15;border:2px solid '+colGeral+'44;padding:6px 18px;border-radius:24px">Média geral: '+(D.geral>0?'+':'')+D.geral+' dias</span></div>';
+  h+='<div style="font-size:12px;color:'+C.txt3+';margin-bottom:16px">↓ Barras menores = menor atraso = melhoria no planejamento · inclui máquinas entregues (saldo final contra a proposta)</div>';
+  if(!D.tem){h+='<div style="padding:80px 0;text-align:center;font-size:18px;color:'+C.txt3+'">Sem dados de atraso para '+D.ano+'</div></div></div>';return h;}
+  var pts=[];
+  h+='<div style="position:relative"><div style="display:flex;align-items:flex-end;gap:12px;height:'+bH+'px">';
+  for(var m=0;m<12;m++){
+    var a=D.avgs[m],tem=a.v!==null,abs=tem?Math.abs(a.v):0,bh=Math.round(abs/maxV*(bH-60));if(tem&&bh<10)bh=10;
+    var cor=_tvxCorAtraso(a.v);
+    if(tem)pts.push({x:(m+0.5)/12*100,y:bH-bh-26});
+    h+='<div style="flex:1;display:flex;flex-direction:column;align-items:center">';
+    h+=tem?'<div style="font-size:19px;font-weight:900;color:'+cor+';margin-bottom:4px">'+(a.v>0?'+':'')+a.v+'d</div>':'<div style="height:30px"></div>';
+    h+='<div style="width:100%;height:'+bh+'px;background:'+cor+';border:1px solid '+cor+'66;border-radius:10px 10px 0 0"></div>';
+    h+='<div style="font-size:11px;color:'+C.txt3+';margin-top:4px;height:14px">'+(tem?a.n+' proj.':'')+'</div>';
+    h+='<div style="font-size:14px;font-weight:'+(m===mesAtual?'900':'700')+';color:'+(m===mesAtual?C.txt:C.txt2)+';letter-spacing:1px">'+_TVX_MES[m]+'</div></div>';
+  }
+  h+='</div>';
+  if(pts.length>=2){
+    var p='M'+pts[0].x.toFixed(1)+','+pts[0].y.toFixed(1);
+    for(var t=1;t<pts.length;t++){var pv=pts[t-1],cu=pts[t],cx=(pv.x+cu.x)/2;p+=' C'+cx.toFixed(1)+','+pv.y.toFixed(1)+' '+cx.toFixed(1)+','+cu.y.toFixed(1)+' '+cu.x.toFixed(1)+','+cu.y.toFixed(1);}
+    h+='<svg viewBox="0 0 100 '+bH+'" preserveAspectRatio="none" style="position:absolute;top:0;left:0;width:100%;height:'+bH+'px;pointer-events:none;overflow:visible"><path d="'+p+'" fill="none" stroke="'+C.amber+'" stroke-width="0.5" stroke-linecap="round" stroke-dasharray="1.4,0.9"/>';
+    for(var q=0;q<pts.length;q++)h+='<circle cx="'+pts[q].x.toFixed(1)+'" cy="'+pts[q].y.toFixed(1)+'" r="0.8" fill="'+C.amber+'" stroke="#fff" stroke-width="0.3"/>';
+    h+='</svg>';
+  }
+  h+='</div><div style="display:flex;gap:18px;margin-top:14px;justify-content:center;flex-wrap:wrap;font-size:12px;color:'+C.txt2+'">';
+  var leg=[[C.green,'Adiantado / no prazo (até −5d)'],[C.cyan,'Leve (−6 a −15d)'],[C.amber,'Moderado (−16 a −30d)'],[C.orange,'Significativo (−31 a −50d)'],[C.red,'Crítico (−51d ou mais)']];
+  for(var l=0;l<leg.length;l++)h+='<span><span style="display:inline-block;width:14px;height:9px;background:'+leg[l][0]+';border-radius:2px;margin-right:5px"></span>'+leg[l][1]+'</span>';
+  h+='<span><span style="display:inline-block;width:18px;border-top:2px dashed '+C.amber+';margin-right:5px;vertical-align:middle"></span>Tendência</span></div></div></div>';
+  return h;
+}
+/* ═══ SLIDE: PREVISÃO DE ENTREGAS — MÊS ATUAL E PRÓXIMO (sem nome de cliente) ═══ */
+function _tvxPrevLista(mes,ano){
+  var list=[];
+  for(var i=0;i<rows.length;i++){
+    var r=rows[i];if(r.status==='entregue'||r.status==='pendente'||r.status==='planejamento')continue;
+    var d=_tvxEff(r);if(!d||d.getMonth()!==mes||d.getFullYear()!==ano)continue;
+    list.push({r:r,d:d});
+  }
+  list.sort(function(a,b){return a.d-b.d;});
+  return list;
+}
+function _tvPrevMeses(){
+  var C=_TVC,hoje=new Date(),mA=hoje.getMonth(),aA=hoje.getFullYear(),mP=mA+1,aP=aA;
+  if(mP>11){mP=0;aP++;}
+  function coluna(lista,mes,ano,cor,rotulo){
+    var MAXL=11;
+    var h2='<div style="flex:1;min-width:0;background:'+C.card+';border:2px solid '+cor+'44;border-radius:18px;padding:20px 24px;box-shadow:0 1px 3px rgba(0,0,0,.05);display:flex;flex-direction:column">';
+    h2+='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px"><div><div style="font-size:12px;font-weight:800;color:'+cor+';letter-spacing:2px">'+rotulo+'</div>';
+    h2+='<div style="font-size:24px;font-weight:900;color:'+C.txt+'">'+_TVX_MES_LONGO[mes]+' '+ano+'</div></div><div style="text-align:right"><div style="font-size:52px;font-weight:900;color:'+cor+';line-height:1">'+lista.length+'</div><div style="font-size:11px;color:'+C.txt3+';letter-spacing:1px">A ENTREGAR</div></div></div>';
+    if(!lista.length){h2+='<div style="padding:60px 0;text-align:center;font-size:17px;color:'+C.txt3+'">Nenhuma máquina prevista</div></div>';return h2;}
+    h2+='<div style="display:flex;flex-direction:column;gap:6px">';
+    var mostra=lista.slice(0,MAXL);
+    for(var j=0;j<mostra.length;j++){
+      var r=mostra[j].r,d=mostra[j].d,sd=_tvxSaldo(r),v=sd?sd.v:null,corS=_tvxCorAtraso(v);
+      var concl=(r.status==='aguardando'||r.status==='carregada'||r.status==='em_desmontagem_carga');
+      var reprog=!!r.reprog;
+      h2+='<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;background:'+(j%2?'rgba(0,0,0,.02)':C.card)+';border:1px solid '+C.brd+';border-left:4px solid '+(concl?C.green:corS)+';border-radius:10px">';
+      h2+='<div style="flex:1;min-width:0"><div style="font-size:16px;font-weight:800;color:'+C.txt+'">#'+esc(r.projeto)+'</div><div style="font-size:11px;color:'+C.txt3+';white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(r.modelo||'')+'</div></div>';
+      h2+='<div style="font-size:11px;font-weight:800;color:'+(concl?C.green:C.txt2)+';text-transform:uppercase;letter-spacing:.5px;white-space:nowrap">'+(_TVX_ST[r.status]||String(r.status||'').replace(/_/g,' '))+'</div>';
+      h2+='<div style="text-align:right;min-width:74px"><div style="font-size:16px;font-weight:800;color:'+C.txt+'">'+_tvxPad(d.getDate())+'/'+_tvxPad(d.getMonth()+1)+(reprog?' <span style="color:#4f46e5" title="reprogramada">⟳</span>':'')+'</div>';
+      h2+=(v!==null?'<div style="font-size:11px;font-weight:800;color:'+corS+'">'+(v>0?'+':'')+v+'d</div>':'')+'</div></div>';
+    }
+    if(lista.length>MAXL)h2+='<div style="text-align:center;font-size:13px;font-weight:700;color:'+C.txt3+';padding:4px 0">+ '+(lista.length-MAXL)+' outras máquinas</div>';
+    h2+='</div></div>';
+    return h2;
+  }
+  var h='<div style="height:100%;display:flex;gap:20px;padding:0 8px">';
+  h+=coluna(_tvxPrevLista(mA,aA),mA,aA,C.cyan,'MÊS ATUAL');
+  h+=coluna(_tvxPrevLista(mP,aP),mP,aP,C.purple,'PRÓXIMO MÊS');
+  h+='</div>';
+  return h;
+}
+
 function _tvStartTimer(){_tvStopTimer();_tv.prog=0;_tv.tick=setInterval(function(){_tv.prog+=100/(_tv.speed*10);var pb=document.getElementById('tv-progress');if(pb)pb.style.width=Math.min(100,_tv.prog)+'%';if(_tv.prog>=100)_tvNext(false);},100);}
 function _tvStopTimer(){if(_tv.tick){clearInterval(_tv.tick);_tv.tick=null;}}
 function _tvNext(manual){
@@ -830,6 +999,9 @@ function _tvRender(dataOnly){
   else if(panel.id==='ronda')html=_tvRonda();
   else if(panel.id==='entregas')html=_tvEntregas();
   else if(panel.id==='alertas')html=_tvAlertas();
+  else if(panel.id==='entregasMes')html=_tvEntregasMes();
+  else if(panel.id==='mediaAtraso')html=_tvMediaAtraso();
+  else if(panel.id==='prevMeses')html=_tvPrevMeses();
   ct.innerHTML='<div>'+html+'</div>';
   if(!dataOnly)_tvRenderDots();
 }
