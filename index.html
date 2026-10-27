@@ -472,7 +472,9 @@ function _tvCargaHorasSetor(){
         }
       }
     }
-    var uwKeys=Object.keys(uwMap).sort().slice(0,14);/* TV: 14 semanas cabem sem apertar */
+    var _limMin=new Date(hoje);_limMin.setDate(_limMin.getDate()-28);
+    var _limIso=_limMin.getFullYear()+'-'+('0'+(_limMin.getMonth()+1)).slice(-2)+'-'+('0'+_limMin.getDate()).slice(-2);
+    var uwKeys=Object.keys(uwMap).filter(function(k){return k>=_limIso;}).sort().slice(0,14);/* TV: 14 semanas cabem sem apertar */
     var maxUW=0,overWks=0,peakH=0,totalDemand=0;
     uwKeys.forEach(function(k){var wh=uwMap[k].h;if(wh>maxUW)maxUW=wh;if(wh>capH)overWks++;if(wh>peakH)peakH=wh;totalDemand+=wh;});
     maxUW=Math.max(capH*1.45,maxUW,1);
