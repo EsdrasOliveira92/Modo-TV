@@ -1117,7 +1117,13 @@ function _tvIdade(){
 setInterval(_tvIdade,5*60*1000);
 async function _carregarDados(silencioso){
   try{
-    var r=await fetch(DADOS_URL+(DADOS_URL.indexOf('?')>=0?'&':'?')+'_ts='+Date.now());
+    /* 30/10/2026 — timeout de 15s: sem isso, um GitHub Pages lento ou um fetch
+       que nunca resolve deixava a tela TRAVADA no "Carregando SPK Maqinox…". */
+    var _ctrl=(typeof AbortController!=='undefined')?new AbortController():null;
+    var _to=setTimeout(function(){try{if(_ctrl)_ctrl.abort();}catch(e){}},15000);
+    var r;
+    try{r=await fetch(DADOS_URL+(DADOS_URL.indexOf('?')>=0?'&':'?')+'_ts='+Date.now(),_ctrl?{signal:_ctrl.signal}:{});}
+    finally{clearTimeout(_to);}
     if(!r.ok)throw new Error('HTTP '+r.status);
     var data=await r.json();
     rows=(data.rows||[]).map(function(r){return r;});
@@ -1158,8 +1164,23 @@ async function _carregarDados(silencioso){
 }
 
 async function _boot(){
-  var ok=await _carregarDados(false);
-  if(!ok)return;
+  var ok=false;
+  try{ok=await _carregarDados(false);}catch(e){ok=false;}
+  if(!ok){
+    /* 30/10/2026 — nunca deixar o loading travado: se não carregou, mostra erro e tenta de novo sozinho */
+    try{document.getElementById('tv-loading').style.display='none';
+      document.getElementById('tv-err').style.display='flex';
+      var _em=document.getElementById('tv-err-msg');
+      if(!_em.textContent||/timeout|abort/i.test(_em.textContent)){
+        var _local=(typeof location!=='undefined'&&location.protocol==='file:');
+        _em.textContent=_local
+          ?'Este arquivo foi aberto direto do computador. O Modo TV precisa ser aberto pelo endereço (link) do GitHub Pages, não por dois cliques no arquivo.'
+          :'Não consegui buscar os dados do GitHub (conexão lenta ou fora do ar). Nova tentativa automática em 20s.';
+      }
+    }catch(e){}
+    setTimeout(_boot,20000);/* tenta de novo sozinho */
+    return;
+  }
   document.getElementById('tv-loading').style.display='none';
   document.getElementById('tv-root').style.display='flex';
   _tvBuildChrome();
