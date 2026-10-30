@@ -20,7 +20,1195 @@
 <div id="tv-err">
   <div style="font-size:40px">⚠️</div>
   <div style="font-size:20px;font-weight:900">Não consegui carregar os dados</div>
+  <div id="tv-err-msg<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SPK Maqinox — Modo TV</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{width:100%;height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+  #tv-root{position:fixed;inset:0;display:flex;flex-direction:column}
+  #tv-loading{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:16px;background:#0b1220;color:#e8eaf0;font-size:18px;font-weight:800}
+  #tv-loading .spin{width:36px;height:36px;border:4px solid #22d3ee44;border-top-color:#22d3ee;border-radius:50%;animation:spin 1s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  #tv-err{display:none;position:fixed;inset:0;background:#1a0808;color:#f87171;align-items:center;justify-content:center;flex-direction:column;gap:14px;padding:40px;text-align:center;font-size:16px}
+</style>
+</head>
+<body>
+
+<div id="tv-loading"><div class="spin"></div><div>Carregando SPK Maqinox…</div></div>
+<div id="tv-err">
+  <div style="font-size:40px">⚠️</div>
+  <div style="font-size:20px;font-weight:900">Não consegui carregar os dados</div>
   <div id="tv-err-msg" style="font-size:13px;color:#fca5a5;max-width:600px"></div>
+  <div style="font-size:12px;color:#94a3b8;max-width:600px">Verifique se o arquivo dados_tv.json foi publicado corretamente no repositório, e se DADOS_URL abaixo aponta pro link correto (raw.githubusercontent.com).</div>
+</div>
+<div id="tv-root" style="display:none"></div>
+
+<script>
+/* ═══════════════════════════════════════════════════════════════
+   MODO TV PÚBLICO — SPK MAQINOX
+   Página standalone, sem login. Lê os dados de um JSON público
+   (publicado manualmente 2-3x/dia a partir do dashboard principal).
+   ═══════════════════════════════════════════════════════════════ */
+
+/* ⚙️ CONFIGURAÇÃO — troque pela URL RAW do seu arquivo no GitHub após o setup */
+/* TV build 2026.10.21-3: +3 painéis (Máquinas por Mês, Média de Atraso, Previsão) — sem nome de cliente */
+var DADOS_URL = 'https://raw.githubusercontent.com/EsdrasOliveira92/Modo-TV/refs/heads/main/dados_tv.json';
+var POLL_MS = 60000; /* verifica se o arquivo mudou a cada 60s (troca é manual, 2-3x/dia) */
+
+var rows = [];
+var hdrTitle = 'PLANEJAMENTO DE PRODUÇÃO';
+var hdrSub = '';
+var _ganttCap = {pcp:2,solda:4,acab:7,mmec:12,mel:5,serra:2,usinagem:9,insp:3};
+var _WEEK_H_PER_WORKER=44;/* 4×9h + 1×8h = 44h/semana */
+var _rondaDoneSet={};/* preenchido pelo campo rondaDone do dados_tv.json — o totem só lê */
+var _rondaIncluiConcluidas=false;
+var _rondaJanela='semana';
+var _lastPublishedAt = '';
+
+var MESES_MAP={jan:0,fev:1,mar:2,abr:3,mai:4,jun:5,jul:6,ago:7,set:8,out:9,nov:10,dez:11};
+var _WORK_DAY_H={0:0,1:9,2:9,3:9,4:9,5:8,6:0};
+var PROC_LABELS={pcp:'PCP / Cadastro',serra:'Serra',usinagem:'Usinagem',solda:'Solda',acabamento:'Acabamento',inspecao:'Separação Logística',mont_mec:'Mont. Mecânica',mont_el:'Mont. Elétrica',testes:'Testes / FAT'};
+var PROC_KEYS=['pcp','serra','usinagem','solda','acabamento','inspecao','mont_mec','mont_el','testes'];
+var _CK_STATUSES={
+  /* PORQUÊ ESTA LINHA É OBRIGATÓRIA: _phaseReachable retorna TRUE quando o chip não
+     tem mapeamento. Sem 'engenharia' aqui, o card despejaria a carteira inteira. */
+  engenharia:['projeto'],
+  /* As 3 etapas da Serra são feitas pelo mesmo time, que se reveza — todas casam
+     com os mesmos status. Inclui 'serra', que existia em SOPTS sem consumidor. */
+  serra_int:['serra','laser'],
+  serra_tubo:['serra','laser'],
+  pcp:['pcp'],
+  compras:['compras'],
+  serra:['serra','laser'],
+  laser:['laser'],
+  usinagem:['usinagem'],
+  solda:['solda'],
+  acabamento:['acabamento'],
+  inspecao:['sep_cq','inspecao'],
+  mont_mec:['mont_mec'],
+  mont_el:['mont_el'],
+  testes:['testes','fat','modificacoes','reprogramado'],
+  fat:['testes','fat']
+};
+var _RONDA_SETORES=[
+  {chip:'cadastro',   ini:'inic_cdt',     fim:'fim_cdt',    lbl:'Cadastro',                icon:'📝', color:'#a78bfa'},
+  {chip:'compras',    ini:'inic_compras', fim:'fim_compras',lbl:'Compras',                 icon:'🛒', color:'#818cf8'},
+  {chip:'serra',      ini:'corte',        fim:'corte',      lbl:'Serra — Usin. Externa',   icon:'🪚', color:'#f97316', fimField:'corte'},
+  {chip:'serra_int',  ini:'corte_int',    fim:'corte_int',  lbl:'Serra — Usin. Interna',   icon:'🪚', color:'#ea580c', fimField:'corte_int'},
+  {chip:'serra_tubo', ini:'corte_tubo',   fim:'corte_tubo', lbl:'Serra — Tubos (Solda)',   icon:'🪚', color:'#c2410c', fimField:'corte_tubo'},
+  {chip:'laser',      ini:'laser',        fim:'laser',      lbl:'Laser / Corte',           icon:'✂️', color:'#22d3ee', fimField:'laser'},
+  {chip:'usinagem',   ini:'usi_inic',     fim:'usi_fim',    lbl:'Usinagem (Serra+Fresa)',  icon:'🔩', color:'#0e7490'},
+  {chip:'solda',      ini:'solda_inic',   fim:'solda_fim',  lbl:'Solda',                   icon:'🔥', color:'#fb923c'},
+  {chip:'acabamento', ini:'acab_inic',    fim:'acab_fim',   lbl:'Acabamento',              icon:'✨', color:'#facc15'},
+  {chip:'inspecao',   ini:'insp_inic',    fim:'insp_fim',   lbl:'Separação Logística',      icon:'🔍', color:'#34d399'},
+  {chip:'mont_mec',   ini:'mmec_inic',    fim:'mmec_fim',   lbl:'Montagem Mecânica',       icon:'⚙️', color:'#f472b6'},
+  {chip:'mont_el',    ini:'mel_inic',     fim:'mel_fim',    lbl:'Montagem Elétrica',       icon:'⚡', color:'#eab308'},
+  {chip:'testes',     ini:'teste_inic',   fim:'teste_fim',  lbl:'Testes',                  icon:'🧪', color:'#a855f7'},
+  {chip:'fat',        ini:'fat_inic',     fim:'fat_fim',    lbl:'FAT',                     icon:'✅', color:'#10b981'}
+];
+var HORAS_DB={"maquinas": ["SPK 250 POUCH", "SPK 250 BOX POUCH S.A", "MINI STAND UP POUCH 220", "Linear", "SPK 250 TWIN  VERTICAL", "SPK 250 VERTICAL", "LER/LEB/LEC"], "implementos": ["Tombador de barrica", "Silo Padrão", "Magazine padrão FVO", "Silo encamisado", "Esteira de entrada - padrão levitari", "Esteira de saída - padrão", "Elevador alimentador menor", "Elevador alimentador maior", "Elevador de caneca", "Plataforma Padrão", "Mesa de encaixotamento", "Esterelizador de vidros", "Esteira da seleção", "Painel elétrico", "Mesa de acumulo"], "horas": {"pcp": {"SPK 250 POUCH": 45, "SPK 250 BOX POUCH S.A": 45, "MINI STAND UP POUCH 220": 45, "Linear": 72, "SPK 250 TWIN  VERTICAL": 45, "SPK 250 VERTICAL": 45, "LER/LEB/LEC": 45, "Tombador de barrica": 0, "Silo Padrão": 0, "Magazine padrão FVO": 0, "Silo encamisado": 0, "Esteira de entrada - padrão levitari": 0, "Esteira de saída - padrão": 0, "Elevador alimentador menor": 0, "Elevador alimentador maior": 0, "Elevador de caneca": 0, "Plataforma Padrão": 0, "Mesa de encaixotamento": 0, "Esterelizador de vidros": 0, "Esteira da seleção": 0, "Painel elétrico": 0, "Mesa de acumulo": 0}, "serra": {"SPK 250 POUCH": 44, "SPK 250 BOX POUCH S.A": 44, "MINI STAND UP POUCH 220": 44, "Linear": 52.8, "SPK 250 TWIN  VERTICAL": 35.2, "SPK 250 VERTICAL": 35.2, "LER/LEB/LEC": 44, "Tombador de barrica": 4.4, "Silo Padrão": 2, "Magazine padrão FVO": 7, "Silo encamisado": 2, "Esteira de entrada - padrão levitari": 4.4, "Esteira de saída - padrão": 4.4, "Elevador alimentador menor": 4.4, "Elevador alimentador maior": 4.4, "Elevador de caneca": 0, "Plataforma Padrão": 7, "Mesa de encaixotamento": 4.4, "Esterelizador de vidros": 4.4, "Esteira da seleção": 4.4, "Painel elétrico": 0, "Mesa de acumulo": 2}, "usinagem": {"SPK 250 POUCH": 193.6, "SPK 250 BOX POUCH S.A": 193.6, "MINI STAND UP POUCH 220": 193.6, "Linear": 220, "SPK 250 TWIN  VERTICAL": 193.6, "SPK 250 VERTICAL": 193.6, "LER/LEB/LEC": 193.6, "Tombador de barrica": 0, "Silo Padrão": 0, "Magazine padrão FVO": 0, "Silo encamisado": 0, "Esteira de entrada - padrão levitari": 0, "Esteira de saída - padrão": 0, "Elevador alimentador menor": 0, "Elevador alimentador maior": 0, "Elevador de caneca": 0, "Plataforma Padrão": 0, "Mesa de encaixotamento": 0, "Esterelizador de vidros": 0, "Esteira da seleção": 0, "Painel elétrico": 0, "Mesa de acumulo": 0}, "solda": {"SPK 250 POUCH": 52.8, "SPK 250 BOX POUCH S.A": 52.8, "MINI STAND UP POUCH 220": 52.8, "Linear": 52.8, "SPK 250 TWIN  VERTICAL": 44, "SPK 250 VERTICAL": 35.2, "LER/LEB/LEC": 39.6, "Tombador de barrica": 26.4, "Silo Padrão": 26.4, "Magazine padrão FVO": 35.2, "Silo encamisado": 44, "Esteira de entrada - padrão levitari": 17.6, "Esteira de saída - padrão": 8.8, "Elevador alimentador menor": 35.2, "Elevador alimentador maior": 35.2, "Elevador de caneca": 0, "Plataforma Padrão": 35.2, "Mesa de encaixotamento": 17.6, "Esterelizador de vidros": 26.4, "Esteira da seleção": 8.8, "Painel elétrico": 8.8, "Mesa de acumulo": 8.8}, "acabamento": {"SPK 250 POUCH": 45, "SPK 250 BOX POUCH S.A": 45, "MINI STAND UP POUCH 220": 40, "Linear": 90, "SPK 250 TWIN  VERTICAL": 30.8, "SPK 250 VERTICAL": 22, "LER/LEB/LEC": 44, "Tombador de barrica": 27, "Silo Padrão": 40, "Magazine padrão FVO": 17.6, "Silo encamisado": 45, "Esteira de entrada - padrão levitari": 17.6, "Esteira de saída - padrão": 8.8, "Elevador alimentador menor": 35.2, "Elevador alimentador maior": 40, "Elevador de caneca": 0, "Plataforma Padrão": 44, "Mesa de encaixotamento": 26.4, "Esterelizador de vidros": 35.2, "Esteira da seleção": 8.8, "Painel elétrico": 8.8, "Mesa de acumulo": 8.8}, "inspecao": {"SPK 250 POUCH": 35.2, "SPK 250 BOX POUCH S.A": 35.2, "MINI STAND UP POUCH 220": 35.2, "Linear": 48.4, "SPK 250 TWIN  VERTICAL": 35.2, "SPK 250 VERTICAL": 35.2, "LER/LEB/LEC": 35.2, "Tombador de barrica": 3, "Silo Padrão": 2, "Magazine padrão FVO": 4.4, "Silo encamisado": 3, "Esteira de entrada - padrão levitari": 2, "Esteira de saída - padrão": 1, "Elevador alimentador menor": 3, "Elevador alimentador maior": 3, "Elevador de caneca": 0, "Plataforma Padrão": 2, "Mesa de encaixotamento": 2, "Esterelizador de vidros": 2, "Esteira da seleção": 2, "Painel elétrico": 1, "Mesa de acumulo": 1}, "mont_mec": {"SPK 250 POUCH": 176, "SPK 250 BOX POUCH S.A": 176, "MINI STAND UP POUCH 220": 176, "Linear": 396, "SPK 250 TWIN  VERTICAL": 61.6, "SPK 250 VERTICAL": 44, "LER/LEB/LEC": 176, "Tombador de barrica": 8.8, "Silo Padrão": 13.2, "Magazine padrão FVO": 44, "Silo encamisado": 17.6, "Esteira de entrada - padrão levitari": 8.8, "Esteira de saída - padrão": 4.4, "Elevador alimentador menor": 8.8, "Elevador alimentador maior": 8.8, "Elevador de caneca": 26.4, "Plataforma Padrão": 17.6, "Mesa de encaixotamento": 8.8, "Esterelizador de vidros": 13.2, "Esteira da seleção": 8.8, "Painel elétrico": 8.8, "Mesa de acumulo": 8.8}, "mont_el": {"SPK 250 POUCH": 76, "SPK 250 BOX POUCH S.A": 76, "MINI STAND UP POUCH 220": 64, "Linear": 108, "SPK 250 TWIN  VERTICAL": 95, "SPK 250 VERTICAL": 54, "LER/LEB/LEC": 70, "Tombador de barrica": 5, "Silo Padrão": 18, "Magazine padrão FVO": 9, "Silo encamisado": 28, "Esteira de entrada - padrão levitari": 10, "Esteira de saída - padrão": 4, "Elevador alimentador menor": 4, "Elevador alimentador maior": 4, "Elevador de caneca": 4, "Plataforma Padrão": 5, "Mesa de encaixotamento": 8, "Esterelizador de vidros": 5, "Esteira da seleção": 5, "Painel elétrico": 36, "Mesa de acumulo": 4}, "testes": {"SPK 250 POUCH": 44, "SPK 250 BOX POUCH S.A": 44, "MINI STAND UP POUCH 220": 44, "Linear": 88, "SPK 250 TWIN  VERTICAL": 44, "SPK 250 VERTICAL": 35.2, "LER/LEB/LEC": 44, "Tombador de barrica": 0, "Silo Padrão": 0, "Magazine padrão FVO": 0, "Silo encamisado": 0, "Esteira de entrada - padrão levitari": 0, "Esteira de saída - padrão": 0, "Elevador alimentador menor": 0, "Elevador alimentador maior": 0, "Elevador de caneca": 0, "Plataforma Padrão": 0, "Mesa de encaixotamento": 0, "Esterelizador de vidros": 0, "Esteira da seleção": 0, "Painel elétrico": 0, "Mesa de acumulo": 0}}};
+var _TVC={bg:'#eef2f7',card:'#ffffff',brd:'#dbe3ec',brd2:'#c7d2de',
+  txt:'#0f172a',txt2:'#475569',txt3:'#94a3b8',
+  cyan:'#0e7490',green:'#059669',red:'#dc2626',amber:'#d97706',
+  blue:'#2563eb',purple:'#7c3aed',orange:'#ea580c',pink:'#db2777',teal:'#0d9488',indigo:'#4f46e5'};
+var _TV_CARGA_SETORES=[
+  /* Engenharia entra como PRIMEIRO setor: a entrega do projeto é o gatilho de todo
+     o processo. Campo entrega_cdt, mesma data para início e fim (evento, não janela). */
+  {l:'Engenharia',fi:'entrega_cdt',ff:'entrega_cdt',ck:'engenharia',c:'#0891b2',icon:'📐'},
+  {l:'PCP / Cadastro',fi:'inic_cdt',ff:'fim_cdt',ck:'pcp',c:'#a855f7',icon:'📋'},
+  {l:'Serra — Usin. Externa',fi:'corte',ff:'corte',ck:'serra',c:'#ea580c',icon:'🪚'},
+  {l:'Serra — Usin. Interna',fi:'corte_int',ff:'corte_int',ck:'serra_int',c:'#c2410c',icon:'🪚'},
+  {l:'Serra — Tubos',fi:'corte_tubo',ff:'corte_tubo',ck:'serra_tubo',c:'#9a3412',icon:'🪚'},
+  {l:'Laser / Corte',fi:'laser',ff:'laser',ck:'laser',c:'#0e7490',icon:'✂️'},
+  {l:'Usinagem',fi:'usi_inic',ff:'usi_fim',ck:'usinagem',c:'#2563eb',icon:'🔩'},
+  {l:'Solda',fi:'solda_inic',ff:'solda_fim',ck:'solda',c:'#c2410c',icon:'🔥'},
+  {l:'Acabamento',fi:'acab_inic',ff:'acab_fim',ck:'acabamento',c:'#a16207',icon:'✨'},
+  {l:'Separação Logística',fi:'insp_inic',ff:'insp_fim',ck:'inspecao',c:'#059669',icon:'🔍'},
+  {l:'Mont. Mecânica',fi:'mmec_inic',ff:'mmec_fim',ck:'mont_mec',c:'#db2777',icon:'⚙️'},
+  {l:'Mont. Elétrica',fi:'mel_inic',ff:'mel_fim',ck:'mont_el',c:'#ca8a04',icon:'⚡'},
+  {l:'Testes',fi:'teste_inic',ff:'teste_fim',ck:'testes',c:'#7c3aed',icon:'🧪'}
+];
+var _TV_CARGA_PAIRS=[[0,1],[2,3],[4,5],[6,7],[8,9],[10,11],[12]];/* 13 setores: Serra virou 3 · Testes sozinho no último */
+var _TV_HORAS_SETORES=[
+  {label:'PCP / Cadastro',fi:'inic_cdt',ff:'fim_cdt', hk:'pcp',     capKey:'pcp',      c:'#a855f7',icon:'📋'},
+  {label:'Serra',       fi:'corte',    ff:'corte',    hk:'serra',    capKey:'serra',    c:'#ea580c',icon:'🪚'},
+  {label:'Usinagem',    fi:'usi_inic', ff:'usi_fim',  hk:'usinagem', capKey:'usinagem', c:'#2563eb',icon:'🔩'},
+  {label:'Solda',       fi:'solda_inic',ff:'solda_fim',hk:'solda',   capKey:'solda',    c:'#c2410c',icon:'🔥'},
+  {label:'Acabamento',  fi:'acab_inic',ff:'acab_fim', hk:'acabamento',capKey:'acab',    c:'#a16207',icon:'✨'},
+  {label:'Separação Logística', fi:'insp_inic',ff:'insp_fim', hk:'inspecao', capKey:'insp',     c:'#059669',icon:'🔍'},
+  {label:'Mont.Mecânica',fi:'mmec_inic',ff:'mmec_fim',hk:'mont_mec', capKey:'mmec',     c:'#db2777',icon:'⚙️'},
+  {label:'Mont.Elétrica',fi:'mel_inic', ff:'mel_fim', hk:'mont_el',  capKey:'mel',      c:'#ca8a04',icon:'⚡'}
+];
+var _TV_HORAS_PAIRS=[[0,1],[2,3],[4,5],[6,7]];
+var _TV_PANELS=[
+  {id:'panorama', title:'Panorama Geral',        icon:'📊'},
+  {id:'funil',    title:'Funil de Produção',     icon:'🔻'},
+  {id:'cargah',   title:'Carga Horária',         icon:'⏱️'},
+  {id:'cargahoras',title:'Carga Horária por Setor',icon:'📈'},
+  {id:'ronda',    title:'Ronda da Semana',       icon:'🏃'},
+  {id:'entregas', title:'Entregas Próximas',     icon:'🚚'},
+  {id:'alertas',  title:'Alertas de Vencimento', icon:'⏰'},
+  {id:'entregasMes', title:'Máquinas por Mês de Entrega', icon:'📊'},
+  {id:'mediaAtraso', title:'Média de Atraso por Mês', icon:'📉'},
+  {id:'prevMeses',   title:'Previsão de Entregas — Mês Atual e Próximo', icon:'📅'}
+];
+
+function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+
+function normDateStr(s){if(!s)return '';s=String(s).toLowerCase().trim().replace(/[áàã]/g,'a').replace(/[éê]/g,'e').replace(/[í]/g,'i').replace(/[óô]/g,'o').replace(/[ú]/g,'u').replace(/[ç]/g,'c').replace(/['\s]/g,'');return s;}
+
+function parseDmy(s){s=normDateStr(s);if(!s)return null;var m=s.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2,4})$/);if(!m)return null;var d=parseInt(m[1]),mo=parseInt(m[2])-1,y=parseInt(m[3]);if(d<1||d>31||mo<0||mo>11)return null;if(y<100)y+=2000;return new Date(y,mo,d);}
+
+function parseDdMmm(s){s=normDateStr(s);if(!s)return null;var m=s.match(/^(\d{1,2})[\-\/\.]([a-z]{3,12})(?:[\-\/\.](\d{2,4}))?$/);if(!m){m=s.match(/^(\d{1,2})([a-z]{3,12})(\d{2,4})?$/);if(!m)return null;}var d=parseInt(m[1]),mo=MESES_MAP[m[2].substr(0,3)];if(mo==null||d<1||d>31)return null;var yr=m[3]?parseInt(m[3]):2026;if(yr<100)yr+=2000;return new Date(yr,mo,d);}
+
+function parseDate2(s){if(!s)return null;var sn=normDateStr(s);if(!sn||sn==='ok'||sn==='?')return null;return parseDmy(sn)||parseDdMmm(sn);}
+
+function _isOk(v){return v&&String(v).toLowerCase().trim()==='ok';}
+
+/* ═══ FERIADOS (19/08/2026) ═══
+   PORQUÊ: _wdh() só olhava o dia da semana. Natal numa quinta contava como dia
+   produtivo de 9h, e _addDiasUteis atravessava o feriado como se fosse expediente.
+   Efeito: cronogramas otimistas em dezembro, Semana Santa, Carnaval e Corpus Christi.
+   Agora feriado vale 0h e não conta como dia útil, exatamente como sábado e domingo.
+   Móveis são derivados da Páscoa (algoritmo de Meeus/Butcher), então valem para
+   qualquer ano sem precisar manutenção anual. */
+var _FERIADOS_FIXOS=[
+  '01-01', /* Confraternização Universal */
+  '04-21', /* Tiradentes */
+  '05-01', /* Dia do Trabalho */
+  '09-07', /* Independência */
+  '10-12', /* Nossa Senhora Aparecida */
+  '11-02', /* Finados */
+  '11-15', /* Proclamação da República */
+  '11-20', /* Consciência Negra */
+  '12-24', /* Véspera de Natal */
+  '12-25', /* Natal */
+  '12-31'  /* Véspera de Ano Novo */
+];
+var _FERIADOS_EXTRA=[];/* datas pontuais 'AAAA-MM-DD' — pontes e paradas de fábrica */
+var _PASCOA_CACHE={};
+function _pascoa(ano){
+  if(_PASCOA_CACHE[ano])return _PASCOA_CACHE[ano];
+  var a=ano%19,b=Math.floor(ano/100),c=ano%100;
+  var d=Math.floor(b/4),e=b%4,f=Math.floor((b+8)/25),g=Math.floor((b-f+1)/3);
+  var h=(19*a+b-d-g+15)%30,i=Math.floor(c/4),k=c%4;
+  var l=(32+2*e+2*i-h-k)%7,m=Math.floor((a+11*h+22*l)/451);
+  var mes=Math.floor((h+l-7*m+114)/31),dia=((h+l-7*m+114)%31)+1;
+  var p=new Date(ano,mes-1,dia);p.setHours(0,0,0,0);
+  _PASCOA_CACHE[ano]=p;return p;
+}
+var _FERIADOS_MOVEIS_CACHE={};
+function _feriadosMoveis(ano){
+  if(_FERIADOS_MOVEIS_CACHE[ano])return _FERIADOS_MOVEIS_CACHE[ano];
+  var p=_pascoa(ano),set={};
+  function marca(offDias){
+    var d=new Date(p.getTime()+offDias*864e5);
+    set[d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2)+'-'+('0'+d.getDate()).slice(-2)]=1;
+  }
+  marca(-48);/* Segunda de Carnaval */
+  marca(-47);/* Terça de Carnaval */
+  marca(-46);/* Quarta de Cinzas (meio expediente na prática — tratada como feriado) */
+  marca(-2); /* Sexta-feira Santa */
+  marca(60); /* Corpus Christi */
+  _FERIADOS_MOVEIS_CACHE[ano]=set;return set;
+}
+function _isFeriado(d){
+  if(!d)return false;
+  var mm=('0'+(d.getMonth()+1)).slice(-2),dd=('0'+d.getDate()).slice(-2);
+  if(_FERIADOS_FIXOS.indexOf(mm+'-'+dd)>=0)return true;
+  var iso=d.getFullYear()+'-'+mm+'-'+dd;
+  if(_FERIADOS_EXTRA.indexOf(iso)>=0)return true;
+  return !!_feriadosMoveis(d.getFullYear())[iso];
+}
+
+
+/* ═══ HORAS CUSTOMIZADAS — portado VERBATIM do painel (19/08/2026) ═══
+   O totem usava só o HORAS_DB embutido. Modelo novo ou override de horas feito
+   no painel não chegava aqui, e a Carga Horária por Setor dava número diferente
+   da mesma tela no painel. Agora o JSON traz _horasExtra e o totem aplica igual. */
+var _horasExtra={maquinas:[],implementos:[],horas_overrides:{}};
+var _horasBaseSnap=null;
+function _initHorasBase(){if(!_horasBaseSnap)_horasBaseSnap={maquinas:HORAS_DB.maquinas.slice(),implementos:HORAS_DB.implementos.slice()};}
+function _applyHorasExtra(){
+  _initHorasBase();
+  var ovr=_horasExtra.horas_overrides||{};
+  Object.keys(ovr).forEach(function(pk){
+    if(!HORAS_DB.horas[pk])HORAS_DB.horas[pk]={};
+    Object.assign(HORAS_DB.horas[pk],ovr[pk]);
+  });
+  (_horasExtra.maquinas||[]).forEach(function(m){
+    if(HORAS_DB.maquinas.indexOf(m)<0){
+      HORAS_DB.maquinas.push(m);
+      PROC_KEYS.forEach(function(pk){if(!HORAS_DB.horas[pk])HORAS_DB.horas[pk]={};if(!HORAS_DB.horas[pk][m])HORAS_DB.horas[pk][m]=0;});
+    }
+  });
+  (_horasExtra.implementos||[]).forEach(function(imp){
+    if(HORAS_DB.implementos.indexOf(imp)<0){
+      HORAS_DB.implementos.push(imp);
+      PROC_KEYS.forEach(function(pk){if(!HORAS_DB.horas[pk])HORAS_DB.horas[pk]={};if(!HORAS_DB.horas[pk][imp])HORAS_DB.horas[pk][imp]=0;});
+    }
+  });
+}
+
+function _wdh(d){if(_isFeriado(d))return 0;return _WORK_DAY_H[d.getDay()]||0;}
+
+/* ═══ MÉTRICAS ESTRATÉGICAS no Modo TV (30/10/2026) ═══ */
+function _tvLeadTime(r){
+  if(!r)return null;
+  var ini=parseDate2(r.entrega_cdt)||parseDate2(r.inic_cdt)||parseDate2(r.inic_compras);
+  var fim=parseDate2(r.maq_final)||parseDate2(r.entregue_em);
+  if(!ini||!fim)return null;
+  ini.setHours(0,0,0,0);fim.setHours(0,0,0,0);
+  var d=Math.round((fim-ini)/864e5);return d>=0?d:null;
+}
+var _TV_PROJ_FINAL_ST={entregue:1,aguardando:1,carregada:1,em_desmontagem_carga:1,modificacoes:1};
+function _tvProjFinalizado(r){return !!(r&&_TV_PROJ_FINAL_ST[r.status]);}
+function _tvProjSucesso(r){
+  if(!_tvProjFinalizado(r))return null;
+  var mf=parseDate2(r.maq_final),ent=parseDate2(r.entrega);
+  if(!mf||!ent)return null;mf.setHours(0,0,0,0);ent.setHours(0,0,0,0);return mf<=ent;
+}
+function _tvOtd(){var fin=0,ok=0;for(var i=0;i<rows.length;i++){var s=_tvProjSucesso(rows[i]);if(s!==null){fin++;if(s)ok++;}}return {pct:fin?Math.round(ok/fin*100):null,ok:ok,fin:fin};}
+function _tvMedianaG(arr){if(!arr.length)return 0;var s=arr.slice().sort(function(a,b){return a-b;});var m=Math.floor(s.length/2);return s.length%2?s[m]:Math.round((s[m-1]+s[m])/2);}
+function _tvLead(){var L=[];for(var i=0;i<rows.length;i++){if(_tvProjFinalizado(rows[i])){var lt=_tvLeadTime(rows[i]);if(lt!==null)L.push(lt);}}if(!L.length)return {media:null,mediana:null,n:0};var soma=0;for(var j=0;j<L.length;j++)soma+=L[j];return {media:Math.round(soma/L.length),mediana:_tvMedianaG(L),n:L.length};}
+function _tvTend(pontos){var n=pontos.length;if(n<2)return null;var sx=0,sy=0,sxy=0,sxx=0;for(var i=0;i<n;i++){sx+=pontos[i].x;sy+=pontos[i].y;sxy+=pontos[i].x*pontos[i].y;sxx+=pontos[i].x*pontos[i].x;}var den=n*sxx-sx*sx;if(den===0)return null;var sl=(n*sxy-sx*sy)/den;return {slope:sl,intercept:(sy-sl*sx)/n};}
+function _tvPanorama(){
+  var ativos=_tvActiveRows();
+  var hoje=new Date();hoje.setHours(0,0,0,0);
+  var sem=_rondaSemanaBase(hoje);
+  var noPrazo=0,atras=0,entregSemana=0,concl=0;
+  for(var i=0;i<rows.length;i++){
+    var r=rows[i];
+    if(r.status==='entregue'){concl++;continue;}
+    if(r.status==='pendente'||r.status==='planejamento')continue;
+    var mf=parseDate2(r.maq_final),ent=parseDate2(r.entrega);
+    if(mf&&ent){if(mf>ent)atras++;else noPrazo++;}
+    if(mf&&mf>=sem.seg&&mf<=sem.dom)entregSemana++;
+  }
+  var h='<div style="height:100%;display:flex;flex-direction:column;gap:22px">';
+  h+='<div style="display:flex;gap:18px">';
+  h+=_tvKpiBox(ativos.length,'Projetos Ativos',_TVC.cyan);
+  h+=_tvKpiBox(noPrazo,'No Prazo',_TVC.green);
+  h+=_tvKpiBox(atras,'Em Atraso',_TVC.red);
+  h+=_tvKpiBox(entregSemana,'Entregas na Semana',_TVC.amber);
+  h+='</div>';
+  var tot=noPrazo+atras,pctPrazo=tot>0?Math.round(noPrazo/tot*100):0;
+  h+='<div style="background:'+_TVC.card+';border:1px solid '+_TVC.brd+';border-radius:18px;padding:28px 32px;box-shadow:0 1px 3px rgba(0,0,0,.05)">';
+  h+='<div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:18px">';
+  h+='<div style="font-size:18px;font-weight:800;color:'+_TVC.txt2+'">SAÚDE DA CARTEIRA</div>';
+  h+='<div style="font-size:44px;font-weight:900;color:'+(pctPrazo>=70?_TVC.green:pctPrazo>=40?_TVC.amber:_TVC.red)+'">'+pctPrazo+'% <span style="font-size:18px;color:'+_TVC.txt3+';font-weight:700">no prazo</span></div>';
+  h+='</div>';
+  h+='<div style="height:34px;background:'+_TVC.bg+';border-radius:17px;overflow:hidden;display:flex">';
+  h+='<div style="width:'+pctPrazo+'%;background:linear-gradient(90deg,#059669,#10b981);display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:900;color:#fff">'+(pctPrazo>12?noPrazo+' no prazo':'')+'</div>';
+  h+='<div style="flex:1;background:linear-gradient(90deg,#dc2626,#ef4444);display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:900;color:#fff">'+((100-pctPrazo)>12?atras+' atrasados':'')+'</div>';
+  h+='</div></div>';
+  var _otd=_tvOtd(),_lead=_tvLead();
+  var _otdCor=_otd.pct===null?_TVC.txt3:(_otd.pct>=90?_TVC.green:_otd.pct>=70?_TVC.amber:_TVC.red);
+  h+='<div style="display:flex;gap:18px">';
+  h+='<div style="flex:1;background:'+_TVC.card+';border:2px solid '+_otdCor+';border-radius:18px;padding:22px 28px;box-shadow:0 1px 3px rgba(0,0,0,.05)">';
+  h+='<div style="font-size:15px;font-weight:800;color:'+_TVC.txt3+';text-transform:uppercase;letter-spacing:.5px">🎯 OTD — Entregas no Prazo</div>';
+  h+='<div style="display:flex;align-items:baseline;gap:14px;margin-top:6px"><span style="font-size:56px;font-weight:900;color:'+_otdCor+';line-height:1">'+(_otd.pct===null?'—':_otd.pct+'%')+'</span>';
+  h+='<span style="font-size:17px;color:'+_TVC.txt3+'">'+(_otd.fin?_otd.ok+' de '+_otd.fin+' finalizadas':'sem máquinas finalizadas')+'</span></div></div>';
+  h+='<div style="flex:1;background:'+_TVC.card+';border:2px solid '+_TVC.indigo+';border-radius:18px;padding:22px 28px;box-shadow:0 1px 3px rgba(0,0,0,.05)">';
+  h+='<div style="font-size:15px;font-weight:800;color:'+_TVC.txt3+';text-transform:uppercase;letter-spacing:.5px">⏱ Lead Time Médio</div>';
+  h+='<div style="display:flex;align-items:baseline;gap:14px;margin-top:6px"><span style="font-size:56px;font-weight:900;color:'+_TVC.indigo+';line-height:1">'+(_lead.media===null?'—':_lead.media)+'</span>';
+  h+='<span style="font-size:20px;color:'+_TVC.txt3+'">dias</span>'+(_lead.mediana!==null?'<span style="font-size:16px;color:'+_TVC.txt3+'">· mediana '+_lead.mediana+'d</span>':'')+'</div>';
+  h+='<div style="font-size:13px;color:'+_TVC.txt3+';margin-top:2px">da Engenharia à máquina finalizada · '+_lead.n+' máquina(s)</div></div>';
+  h+='</div>';
+  h+='<div style="display:flex;gap:18px">';
+  h+=_tvKpiBox(concl,'Concluídos / Entregues',_TVC.purple);
+  h+=_tvKpiBox(rows.length,'Total na Carteira',_TVC.blue);
+  var prox=0,lim=new Date(sem.dom.getTime()+7*864e5);
+  for(var j=0;j<rows.length;j++){var r2=rows[j];if(['pendente','planejamento','entregue'].indexOf(r2.status)<0){var m2=parseDate2(r2.maq_final);if(m2&&m2>sem.dom&&m2<=lim)prox++;}}
+  h+=_tvKpiBox(prox,'Entregas Próx. Semana',_TVC.orange);
+  h+='</div></div>';
+  return h;
+}
+
+function _tvCargaHoraria(){
+  var hoje=new Date();hoje.setHours(0,0,0,0);
+  var par=_TV_CARGA_PAIRS[_tvCargaPairIdx];
+  var h='<div style="height:100%;display:grid;grid-template-columns:repeat('+par.length+',1fr);gap:20px">';
+  par.forEach(function(si){
+    var s=_TV_CARGA_SETORES[si];
+    var lista=[];
+    for(var i=0;i<rows.length;i++){
+      var r=rows[i];
+      if(['pendente','planejamento','entregue','aguardando','em_desmontagem_carga','carregada'].indexOf(r.status)>=0)continue;
+      if(_jaPassouChip(r,s.ck))continue;/* já passou desta etapa — os que ainda não chegaram ficam */
+      if(r[s.ff]==='ok'||_faseFeita(r,s.ck))continue;
+      if(_rondaDoneSet&&_rondaDoneSet[r.projeto+'\u00b7'+s.ck])continue;
+      var di=parseDate2(r[s.fi]),df=parseDate2(r[s.ff]);
+      if(!df)continue;
+      lista.push({cli:r.modelo||'',proj:r.projeto,mod:r.modelo,ini:r[s.fi],fim:r[s.ff],di:di,df:df,dias:Math.round((df-hoje)/864e5)});
+    }
+    lista.sort(function(a,b){return a.df-b.df;});
+    var atras=lista.filter(function(x){return x.df<hoje;}).length;
+    /* Se não há nada pendente AGORA neste setor, montar a lista dos PRÓXIMOS a vencer
+       (projetos que ainda vão chegar nesta etapa) — evita deixar o painel vazio na TV */
+    /* ═══ CORREÇÃO 15/08/2026 — "Próximos a vencer" não é atraso ═══
+       PORQUÊ: este fallback varria a carteira inteira sem checar se a fase ainda
+       está à frente. Fase com data vencida entrava e era pintada de vermelho como
+       "Nd atraso", produzindo um card que dizia "0 PENDENTES" e listava 47 projetos
+       em atraso ao mesmo tempo. Regra do Esdras: atraso no setor é só o que NÃO foi
+       concluído NESTE setor — e isso é o `lista` acima (match exato de status).
+       O fallback existe apenas para não deixar a TV vazia, então passa a mostrar
+       exclusivamente fases FUTURAS (dias >= 0). Nada aqui conta como atraso. */
+    var proximos=[],venctoSemMarca=0;
+    if(lista.length===0){
+      for(var pi=0;pi<rows.length;pi++){
+        var pr=rows[pi];
+        if(['pendente','planejamento','entregue','aguardando','em_desmontagem_carga','carregada'].indexOf(pr.status)>=0)continue;
+        if(_jaPassouChip(pr,s.ck))continue;/* mesma regra da lista principal */
+        if(pr[s.ff]==='ok'||_faseFeita(pr,s.ck))continue;
+        if(_rondaDoneSet&&_rondaDoneSet[pr.projeto+'\u00b7'+s.ck])continue;
+        var pdf=parseDate2(pr[s.ff]);
+        if(!pdf)continue;
+        pdf.setHours(0,0,0,0);
+        var pdias=Math.round((pdf-hoje)/864e5);
+        /* Data já passada: a fase não é "próxima a vencer". Não entra na lista e
+           não vira atraso — só alimenta o contador de fases sem marcação. */
+        if(pdias<0){venctoSemMarca++;continue;}
+        proximos.push({cli:pr.modelo||'',proj:pr.projeto,fim:pr[s.ff],df:pdf,dias:pdias});
+      }
+      proximos.sort(function(a,b){return a.df-b.df;});
+    }
+
+    h+='<div style="background:'+_TVC.card+';border:1px solid '+_TVC.brd+';border-top:5px solid '+s.c+';border-radius:16px;padding:22px 24px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.05)">';
+    h+='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">';
+    h+='<div style="font-size:26px;font-weight:900;color:'+s.c+'">'+s.icon+' '+s.l+'</div>';
+    h+='<div style="text-align:right"><div style="font-size:40px;font-weight:900;color:'+_TVC.txt+';line-height:1">'+lista.length+'</div><div style="font-size:11px;color:'+_TVC.txt3+';text-transform:uppercase;letter-spacing:1px;font-weight:800">pendentes</div></div>';
+    h+='</div>';
+    if(atras>0)h+='<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:10px;padding:8px 14px;font-size:14px;font-weight:900;color:'+_TVC.red+';margin-bottom:14px">⚠ '+atras+' projeto'+(atras>1?'s':'')+' em atraso</div>';
+    h+='<div style="flex:1;overflow:hidden">';
+    var lim=Math.min(8,lista.length);
+    for(var k=0;k<lim;k++){
+      var it=lista[k];
+      var urg=it.dias<0?_TVC.red:it.dias<=2?_TVC.orange:it.dias<=5?_TVC.amber:_TVC.green;
+      var badge=it.dias<0?Math.abs(it.dias)+'d atraso':it.dias===0?'hoje':it.dias===1?'amanhã':it.dias+' dias';
+      h+='<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid '+_TVC.brd+'">';
+      h+='<div style="flex:1;min-width:0"><div style="font-size:17px;font-weight:800;color:'+_TVC.txt+';white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(it.cli)+'</div><div style="font-size:12px;color:'+_TVC.txt3+'">'+esc(it.proj)+' · fim '+esc(it.fim||'—')+'</div></div>';
+      h+='<div style="text-align:right;margin-left:12px;flex-shrink:0"><span style="background:'+urg+';color:#fff;font-size:13px;font-weight:900;padding:4px 12px;border-radius:8px;white-space:nowrap">'+badge+'</span></div>';
+      h+='</div>';
+    }
+    if(lista.length>8)h+='<div style="font-size:13px;color:'+_TVC.txt3+';margin-top:10px;text-align:center">+ '+(lista.length-8)+' outros projetos</div>';
+    if(lista.length===0){
+      if(proximos.length===0){
+        h+='<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:8px">';
+        h+='<div style="font-size:22px;font-weight:900;color:'+_TVC.green+'">✓ Nada pendente neste setor</div>';
+        if(venctoSemMarca>0)h+='<div style="font-size:13px;color:'+_TVC.txt3+';text-align:center;max-width:90%">'+venctoSemMarca+' fase'+(venctoSemMarca>1?'s':'')+' com data já passada e sem marcação de conclusão</div>';
+        h+='</div>';
+      }
+      else{
+        h+='<div style="font-size:12px;font-weight:800;color:'+_TVC.txt3+';text-transform:uppercase;letter-spacing:1px;margin-bottom:8px">Próximos a vencer · ainda não chegaram aqui</div>';
+        var plim=Math.min(8,proximos.length);
+        for(var pk=0;pk<plim;pk++){
+          var pit=proximos[pk];
+          /* Só fases futuras chegam aqui — nunca vermelho, nunca "atraso" */
+          var purg=pit.dias<=2?_TVC.orange:pit.dias<=5?_TVC.amber:_TVC.green;
+          var pbadge=pit.dias===0?'hoje':pit.dias===1?'amanhã':'em '+pit.dias+' dias';
+          h+='<div style="display:flex;align-items:center;justify-content:space-between;padding:9px 0;border-bottom:1px solid '+_TVC.brd+';opacity:.78">';
+          h+='<div style="flex:1;min-width:0"><div style="font-size:16px;font-weight:800;color:'+_TVC.txt+';white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(pit.cli)+'</div><div style="font-size:12px;color:'+_TVC.txt3+'">'+esc(pit.proj)+' · previsto '+esc(pit.fim||'—')+'</div></div>';
+          h+='<div style="text-align:right;margin-left:12px;flex-shrink:0"><span style="background:'+purg+';color:#fff;font-size:12px;font-weight:900;padding:4px 11px;border-radius:8px;white-space:nowrap">'+pbadge+'</span></div>';
+          h+='</div>';
+        }
+        if(proximos.length>8)h+='<div style="font-size:12px;color:'+_TVC.txt3+';margin-top:9px;text-align:center">+ '+(proximos.length-8)+' outros</div>';
+        if(venctoSemMarca>0)h+='<div style="font-size:11px;color:'+_TVC.txt3+';margin-top:10px;text-align:center;font-style:italic">'+venctoSemMarca+' fase'+(venctoSemMarca>1?'s':'')+' com data passada sem marcação — não contam como atraso deste setor</div>';
+      }
+    }
+
+    h+='</div></div>';
+  });
+  h+='</div>';
+  return h;
+}
+
+function _tvCargaHorasSetor(){
+  /* ═══ 02/10/2026 — ALINHADO COM A ABA CARGA HORÁRIA DO ARTEFATO ═══
+     O TV contava carga de máquinas JÁ PRONTAS: projetos em 'aguardando',
+     'em_desmontagem_carga' e 'carregada' saíram da produção mas mantêm datas de fase
+     preenchidas, então entravam no cálculo e inflavam a carga de todos os setores
+     (ex.: SIMAS 11202, finalizada em 24/07, ainda somando horas em Solda e Montagem).
+     O artefato já os excluía — agora os dois usam o mesmo filtro. */
+  /* ═══ CARGA HORÁRIA POR SETOR — GRÁFICO DE BARRAS SEMANAIS (15/08/2026) ═══
+     Porta para o Modo TV a mesma leitura da aba Carga Horária do artefato:
+     horas distribuídas por semana ISO, linha tracejada de capacidade, barra
+     dividida em dentro-da-capacidade + excedente. Regra 3.3 preservada:
+     NÃO filtra por setor via _phaseReachable — mede capacidade planejada total. */
+  var hoje=new Date();hoje.setHours(0,0,0,0);
+  var par=_TV_HORAS_PAIRS[_tvHorasPairIdx];
+  var h='<div style="height:100%;display:grid;grid-template-columns:repeat('+par.length+',1fr);gap:20px">';
+  par.forEach(function(si){
+    var s=_TV_HORAS_SETORES[si];
+    var cap=(typeof _ganttCap!=='undefined'&&_ganttCap[s.capKey])||1;
+    var capH=cap*_WEEK_H_PER_WORKER;
+    /* 1. Coletar barras (mesmos filtros da versão em lista, sem alteração de regra) */
+    var bars=[], _backlogTV=[];/* fases vencidas: distribuídas por capacidade adiante */
+    for(var i=0;i<rows.length;i++){
+      var r=rows[i];
+      if(['pendente','planejamento','entregue','aguardando','em_desmontagem_carga','carregada'].indexOf(r.status)>=0)continue;
+      if(r[s.fi]==='ok'||r[s.ff]==='ok')continue;
+      if(_faseFeita(r,s.hk))continue;
+      if(_rondaDoneSet&&_rondaDoneSet[r.projeto+'\u00b7'+s.hk])continue;
+      var ds=parseDate2(r[s.fi]),de=parseDate2(r[s.ff]);
+      if(s.fi===s.ff&&ds&&!de)de=new Date(ds.getTime()+2*864e5);
+      if(!ds||!de)continue;
+      ds.setHours(0,0,0,0);de.setHours(0,0,0,0);
+      if(de<ds)de=new Date(ds.getTime()+864e5);
+      var horas=0;
+      try{horas=_getHorasTotal(r)[s.hk]||0;}catch(e){}
+      if(horas<=0)continue;/* sem horas cadastradas na aba Horas → não conta (evita número fictício) */
+      /* ═══ 18/09/2026 — ATRASO ACUMULADO ENTRA NO GRÁFICO (mesma regra do artefato) ═══
+         Antes: if(de<hoje)continue; — fase vencida sumia do gráfico e o setor parecia
+         dentro da capacidade mesmo com pilha de atraso. A Serra mostrava "9 projetos em
+         atraso" na lista e nenhum pico no gráfico de horas — foi o que o Esdras apontou.
+         Agora o vencido entra numa FILA distribuída depois pela capacidade real, semana
+         a semana, igual à aba Carga Horária do artefato. */
+      if(de<hoje){_backlogTV.push({horas:Math.round(horas*10)/10});continue;}
+      bars.push({cli:r.modelo||'',proj:r.projeto,s:ds,e:de,horas:Math.round(horas*10)/10});
+    }
+    /* 2. Distribuir as horas de cada projeto pelas semanas úteis que ele ocupa */
+    var uwMap={};
+    bars.forEach(function(bar){
+      var twH=0,tc=new Date(bar.s);tc.setHours(0,0,0,0);var g=0;
+      while(tc<=bar.e&&g<600){g++;twH+=_wdh(tc);tc.setDate(tc.getDate()+1);}
+      if(!twH)return;
+      tc=new Date(bar.s);tc.setHours(0,0,0,0);g=0;
+      while(tc<=bar.e&&g<600){
+        g++;var dh=_wdh(tc);
+        if(dh>0){
+          var wd=new Date(tc),dy=wd.getDay(),df=dy===0?-6:1-dy;
+          wd.setDate(wd.getDate()+df);wd.setHours(0,0,0,0);
+          var wk=wd.getFullYear()+'-'+('0'+(wd.getMonth()+1)).slice(-2)+'-'+('0'+wd.getDate()).slice(-2);
+          if(!uwMap[wk])uwMap[wk]={h:0,projs:[]};
+          var hs=bar.horas*(dh/twH);
+          uwMap[wk].h+=hs;
+          uwMap[wk].projs.push({cli:bar.cli,h:Math.round(hs*10)/10});
+        }
+        tc.setDate(tc.getDate()+1);
+      }
+    });
+    /* ═══ 18/09/2026 — DISTRIBUIR O BACKLOG PELA CAPACIDADE REAL ═══
+       Preenche semana a semana a partir de hoje, só com o que sobra da capacidade
+       depois do trabalho já programado. O atraso empurra as semanas seguintes em vez
+       de virar um pico impossível numa só. */
+    if(_backlogTV.length){
+      var _totB=0;_backlogTV.forEach(function(b){_totB+=(b.horas||0);});
+      if(_totB>0){
+        var _wc=new Date(hoje);var _dy0=_wc.getDay();
+        _wc.setDate(_wc.getDate()+(_dy0===0?-6:1-_dy0));_wc.setHours(0,0,0,0);
+        var _rest=_totB,_g=0;
+        while(_rest>0.05&&_g<104){
+          _g++;
+          var _wk=_wc.getFullYear()+'-'+('0'+(_wc.getMonth()+1)).slice(-2)+'-'+('0'+_wc.getDate()).slice(-2);
+          if(!uwMap[_wk])uwMap[_wk]={h:0,projs:[]};
+          var _livre=capH-uwMap[_wk].h;
+          if(_livre>0.05){
+            var _al=Math.min(_livre,_rest);
+            uwMap[_wk].h+=_al;
+            uwMap[_wk].backlogH=(uwMap[_wk].backlogH||0)+_al;
+            uwMap[_wk].projs.push({cli:'\u26a0 Atraso acumulado',h:Math.round(_al*10)/10});
+            _rest-=_al;
+          }
+          _wc.setDate(_wc.getDate()+7);
+        }
+        if(_rest>0.05){
+          var _w0=new Date(hoje);var _d0=_w0.getDay();
+          _w0.setDate(_w0.getDate()+(_d0===0?-6:1-_d0));_w0.setHours(0,0,0,0);
+          var _wk0=_w0.getFullYear()+'-'+('0'+(_w0.getMonth()+1)).slice(-2)+'-'+('0'+_w0.getDate()).slice(-2);
+          if(!uwMap[_wk0])uwMap[_wk0]={h:0,projs:[]};
+          uwMap[_wk0].h+=_rest;
+          uwMap[_wk0].backlogH=(uwMap[_wk0].backlogH||0)+_rest;
+          uwMap[_wk0].projs.push({cli:'\u26a0 Atraso acumulado (excedente)',h:Math.round(_rest*10)/10});
+        }
+      }
+    }
+    var _limMin=new Date(hoje);_limMin.setDate(_limMin.getDate()-28);
+    var _limIso=_limMin.getFullYear()+'-'+('0'+(_limMin.getMonth()+1)).slice(-2)+'-'+('0'+_limMin.getDate()).slice(-2);
+    var uwKeys=Object.keys(uwMap).filter(function(k){return k>=_limIso;}).sort().slice(0,14);/* TV: 14 semanas cabem sem apertar */
+    var maxUW=0,overWks=0,peakH=0,totalDemand=0;
+    uwKeys.forEach(function(k){var wh=uwMap[k].h;if(wh>maxUW)maxUW=wh;if(wh>capH)overWks++;if(wh>peakH)peakH=wh;totalDemand+=wh;});
+    maxUW=Math.max(capH*1.45,maxUW,1);
+    var chartH=190,capPx=Math.round((1-capH/maxUW)*chartH);
+    var stColor=overWks>0?_TVC.red:(peakH>=capH*0.8?_TVC.amber:_TVC.green);
+    /* 3. Card */
+    h+='<div style="background:'+_TVC.card+';border:1px solid '+_TVC.brd+';border-top:5px solid '+s.c+';border-radius:16px;padding:22px 24px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.05)">';
+    h+='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">';
+    h+='<div style="font-size:24px;font-weight:900;color:'+s.c+'">'+s.icon+' '+s.label+'</div>';
+    h+='<div style="text-align:right"><div style="font-size:32px;font-weight:900;color:'+stColor+';line-height:1">'+Math.round(peakH)+'h</div><div style="font-size:10px;color:'+_TVC.txt3+';text-transform:uppercase;letter-spacing:1px;font-weight:800">pico semanal</div></div>';
+    h+='</div>';
+    h+='<div style="font-size:12px;color:'+_TVC.txt2+';margin-bottom:12px">'+cap+' operador'+(cap!==1?'es':'')+' × '+_WEEK_H_PER_WORKER+'h = <strong>'+capH+'h/sem</strong> · '+bars.length+' projeto'+(bars.length!==1?'s':'')+' · total '+Math.round(totalDemand)+'h</div>';
+    if(!uwKeys.length){
+      h+='<div style="flex:1;display:flex;align-items:center;justify-content:center;font-size:20px;color:'+_TVC.green+'">✓ Sem carga planejada</div></div>';
+      return;
+    }
+    if(overWks>0)h+='<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:10px;padding:7px 14px;font-size:14px;font-weight:900;color:'+_TVC.red+';margin-bottom:12px">🔴 '+overWks+' semana'+(overWks>1?'s':'')+' acima da capacidade</div>';
+    else h+='<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:7px 14px;font-size:14px;font-weight:900;color:'+_TVC.green+';margin-bottom:12px">✅ Dentro da capacidade</div>';
+    /* 4. Gráfico de barras */
+    h+='<div style="position:relative;flex:1">';
+    h+='<div style="position:absolute;left:0;right:0;top:'+capPx+'px;height:0;border-top:2px dashed '+_TVC.txt3+';z-index:3;pointer-events:none"><span style="position:absolute;right:0;top:-15px;font-size:10px;font-weight:800;color:'+_TVC.txt2+';background:'+_TVC.card+';padding:0 5px;white-space:nowrap">'+capH+'h capacidade</span></div>';
+    h+='<div style="display:flex;align-items:flex-end;gap:4px;height:'+chartH+'px">';
+    uwKeys.forEach(function(k){
+      var wh=uwMap[k].h;
+      var exH=Math.max(0,wh-capH),bT=Math.max(3,Math.round(wh/maxUW*chartH));
+      var bE=exH>0?Math.max(3,Math.round(exH/maxUW*chartH)):0;
+      var bW=Math.max(2,bT-bE);
+      var p2=k.split('-'),wd2=new Date(parseInt(p2[0]),parseInt(p2[1])-1,parseInt(p2[2]));
+      var wLbl=('0'+wd2.getDate()).slice(-2)+'/'+('0'+(wd2.getMonth()+1)).slice(-2);
+      var isO=exH>0,isN=!isO&&wh>=capH*0.8;
+      var nC=isO?_TVC.red:(isN?_TVC.amber:s.c);
+      h+='<div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;min-width:0">';
+      h+='<span style="font-size:11px;font-weight:900;color:'+nC+';margin-bottom:3px;white-space:nowrap">'+Math.round(wh)+'h</span>';
+      h+='<div style="display:flex;flex-direction:column-reverse;align-items:center;width:100%">';
+      h+='<div style="width:100%;height:'+bW+'px;background:'+(isN?_TVC.amber:s.c)+';border-radius:'+(bE>0?'0 0 5px 5px':'5px')+'"></div>';
+      if(bE>0)h+='<div style="width:100%;height:'+bE+'px;background:'+_TVC.red+';border-radius:5px 5px 0 0"></div>';
+      h+='</div>';
+      h+='<span style="font-size:10px;font-weight:700;color:'+_TVC.txt3+';margin-top:5px;white-space:nowrap">'+wLbl+'</span>';
+      h+='</div>';
+    });
+    h+='</div></div></div>';
+  });
+  h+='</div>';
+  return h;
+}
+
+function _tvRonda(){
+  var hoje=new Date();hoje.setHours(0,0,0,0);
+  var sem=_rondaSemanaBase(hoje);
+  var setoresInfo=[];
+  for(var i=0;i<_RONDA_SETORES.length;i++){var s=_RONDA_SETORES[i];var fila=_rondaBuildFila(s.chip).filter(function(x){return !x.concluida;});if(fila.length>0)setoresInfo.push({s:s,fila:fila});}
+  setoresInfo.sort(function(a,b){return b.fila.length-a.fila.length;});
+  if(setoresInfo.length===0)return '<div style="height:100%;display:flex;align-items:center;justify-content:center;font-size:26px;color:'+_TVC.green+';font-weight:800">✓ Nenhuma pendência de ronda esta semana</div>';
+  var h='<div style="height:100%;display:flex;flex-direction:column;gap:12px">';
+  h+='<div style="font-size:15px;color:'+_TVC.txt2+';text-align:center;margin-bottom:4px">Semana '+('0'+sem.seg.getDate()).slice(-2)+'/'+('0'+(sem.seg.getMonth()+1)).slice(-2)+' a '+('0'+sem.dom.getDate()).slice(-2)+'/'+('0'+(sem.dom.getMonth()+1)).slice(-2)+' · o que cada setor precisa concluir</div>';
+  h+='<div style="flex:1;display:grid;grid-template-columns:repeat(3,1fr);gap:14px;overflow:hidden">';
+  setoresInfo.slice(0,6).forEach(function(si){
+    var atras=si.fila.filter(function(x){return x.fimD&&x.fimD<hoje;}).length;
+    h+='<div style="background:'+_TVC.card+';border:1px solid '+_TVC.brd+';border-left:5px solid '+si.s.color+';border-radius:14px;padding:16px 18px;display:flex;flex-direction:column;box-shadow:0 1px 3px rgba(0,0,0,.05)">';
+    h+='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">';
+    h+='<div style="font-size:18px;font-weight:900;color:'+si.s.color+'">'+si.s.icon+' '+si.s.lbl+'</div>';
+    h+='<div style="font-size:28px;font-weight:900;color:'+_TVC.txt+'">'+si.fila.length+'</div>';
+    h+='</div>';
+    if(atras>0)h+='<div style="font-size:12px;font-weight:900;color:'+_TVC.red+';margin-bottom:8px">⚠ '+atras+' em atraso</div>';
+    var lim=Math.min(4,si.fila.length);
+    for(var k=0;k<lim;k++){var it=si.fila[k],late=it.fimD&&it.fimD<hoje;h+='<div style="font-size:13px;color:'+_TVC.txt2+';padding:5px 0;border-bottom:1px solid '+_TVC.brd+';display:flex;justify-content:space-between"><span style="font-weight:700;color:'+_TVC.txt+'">'+esc(it.cli.substring(0,16))+'</span><span style="color:'+(late?_TVC.red:_TVC.txt3)+';font-weight:800">'+esc(it.fim||'—')+'</span></div>';}
+    if(si.fila.length>4)h+='<div style="font-size:11px;color:'+_TVC.txt3+';margin-top:6px">+ '+(si.fila.length-4)+' outros</div>';
+    h+='</div>';
+  });
+  h+='</div></div>';
+  return h;
+}
+
+function _tvEntregas(){
+  var hoje=new Date();hoje.setHours(0,0,0,0);
+  var lista=[];
+  for(var i=0;i<rows.length;i++){
+    var r=rows[i];
+    if(['pendente','planejamento','entregue'].indexOf(r.status)>=0)continue;
+    var mf=parseDate2(r.maq_final);
+    if(!mf||mf<hoje)continue;
+    lista.push({cli:r.modelo||'',proj:r.projeto,mod:r.modelo,mf:mf,mfStr:r.maq_final,dias:Math.round((mf-hoje)/864e5)});
+  }
+  lista.sort(function(a,b){return a.mf-b.mf;});
+  if(lista.length===0)return '<div style="height:100%;display:flex;align-items:center;justify-content:center;font-size:24px;color:'+_TVC.txt2+'">Nenhuma entrega futura programada</div>';
+  var h='<div style="height:100%;display:flex;flex-direction:column;gap:10px">';
+  lista.slice(0,9).forEach(function(it){
+    var urg=it.dias<=7?_TVC.red:it.dias<=15?_TVC.amber:_TVC.green;
+    h+='<div style="display:flex;align-items:center;gap:20px;background:'+_TVC.card+';border:1px solid '+_TVC.brd+';border-left:5px solid '+urg+';border-radius:12px;padding:14px 22px;box-shadow:0 1px 2px rgba(0,0,0,.04)">';
+    h+='<div style="font-size:22px;font-weight:900;color:'+urg+';min-width:120px">'+esc(it.mfStr)+'</div>';
+    h+='<div style="flex:1;min-width:0"><div style="font-size:20px;font-weight:800;color:'+_TVC.txt+';white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(it.cli)+'</div><div style="font-size:13px;color:'+_TVC.txt3+'">'+esc(it.proj)+' · '+esc(it.mod.substring(0,40))+'</div></div>';
+    h+='<div style="text-align:right"><div style="font-size:26px;font-weight:900;color:'+urg+'">'+it.dias+'</div><div style="font-size:11px;color:'+_TVC.txt3+';text-transform:uppercase;letter-spacing:1px">dias</div></div>';
+    h+='</div>';
+  });
+  h+='</div>';
+  return h;
+}
+
+function _tvAlertas(){
+  var fases=[];
+  try{fases=_computeFasesVencendo();}catch(e){fases=[];}
+  if(!fases||fases.length===0)return '<div style="height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px"><div style="font-size:80px">✓</div><div style="font-size:30px;font-weight:900;color:'+_TVC.green+'">Nenhuma fase vencendo nos próximos 3 dias</div><div style="font-size:16px;color:'+_TVC.txt2+'">Produção dentro do prazo planejado</div></div>';
+  var byD={0:[],1:[],2:[],3:[]};
+  fases.forEach(function(f){var d=f.dias!==undefined?f.dias:(f.d!==undefined?f.d:0);if(d>=0&&d<=3)byD[d].push(f);});
+  var labels={0:'HOJE',1:'AMANHÃ',2:'EM 2 DIAS',3:'EM 3 DIAS'};
+  var cores={0:_TVC.red,1:_TVC.orange,2:_TVC.amber,3:'#ca8a04'};
+  var h='<div style="height:100%;display:grid;grid-template-columns:repeat(4,1fr);gap:14px;overflow:hidden">';
+  [0,1,2,3].forEach(function(d){
+    h+='<div style="background:'+_TVC.card+';border:1px solid '+_TVC.brd+';border-top:5px solid '+cores[d]+';border-radius:16px;padding:16px;display:flex;flex-direction:column;box-shadow:0 1px 3px rgba(0,0,0,.05)">';
+    h+='<div style="text-align:center;margin-bottom:12px"><div style="font-size:44px;font-weight:900;color:'+cores[d]+'">'+byD[d].length+'</div><div style="font-size:14px;font-weight:900;color:'+cores[d]+';letter-spacing:1px">'+labels[d]+'</div></div>';
+    var lim=Math.min(6,byD[d].length);
+    for(var k=0;k<lim;k++){var f=byD[d][k];h+='<div style="font-size:13px;color:'+_TVC.txt2+';padding:6px 0;border-bottom:1px solid '+_TVC.brd+'"><div style="font-weight:800;color:'+_TVC.txt+'">'+esc((f.modelo||f.cli||'').substring(0,16))+'</div><div style="font-size:11px;color:'+_TVC.txt3+'">'+esc(f.fase||f.faseLabel||'')+'</div></div>';}
+    if(byD[d].length>6)h+='<div style="font-size:11px;color:'+_TVC.txt3+';margin-top:6px">+ '+(byD[d].length-6)+'</div>';
+    h+='</div>';
+  });
+  h+='</div>';
+  return h;
+}
+
+function _tvFunil(){
+  var etapas=[
+    {l:'Engenharia',st:['projeto'],c:'#c026d3'},/* status 'projeto' = ainda na Engenharia */
+    {l:'PCP',st:['pcp'],c:_TVC.purple},{l:'Compras',st:['compras'],c:'#4f46e5'},
+    {l:'Corte/Serra/Laser',st:['laser'],c:_TVC.cyan},{l:'Usinagem',st:['usinagem'],c:_TVC.blue},
+    {l:'Solda',st:['solda'],c:_TVC.orange},{l:'Acabamento',st:['acabamento'],c:'#ca8a04'},
+    {l:'Separação Logística',st:['sep_cq','inspecao'],c:_TVC.green},{l:'Montagem',st:['mont_mec','mont_el'],c:_TVC.pink},
+    {l:'Testes/FAT',st:['testes','fat'],c:_TVC.purple},{l:'Finalização',st:['aguardando','em_desmontagem_carga','carregada'],c:_TVC.teal}
+  ];
+  var cont=etapas.map(function(e){var n=0;for(var i=0;i<rows.length;i++){if(e.st.indexOf(rows[i].status)>=0)n++;}return {l:e.l,c:e.c,n:n};});
+  var max=Math.max.apply(null,cont.map(function(x){return x.n;}).concat([1]));
+  var h='<div style="height:100%;display:flex;flex-direction:column;gap:10px;justify-content:center">';
+  cont.forEach(function(e){
+    var w=Math.round(e.n/max*100);
+    h+='<div style="display:flex;align-items:center;gap:18px">';
+    h+='<div style="width:200px;font-size:18px;font-weight:800;color:'+_TVC.txt+';text-align:right">'+e.l+'</div>';
+    h+='<div style="flex:1;height:40px;background:'+_TVC.bg+';border-radius:10px;overflow:hidden;border:1px solid '+_TVC.brd+'">';
+    h+='<div style="height:100%;width:'+Math.max(w,e.n>0?7:0)+'%;background:'+e.c+';border-radius:9px;display:flex;align-items:center;padding-left:14px">';
+    if(e.n>0)h+='<span style="font-size:19px;font-weight:900;color:#fff">'+e.n+'</span>';
+    h+='</div></div></div>';
+  });
+  var totAtivos=cont.reduce(function(a,b){return a+b.n;},0);
+  h+='<div style="text-align:center;font-size:15px;color:'+_TVC.txt2+';margin-top:10px">'+totAtivos+' projetos distribuídos nas etapas · atualizado em tempo real</div>';
+  h+='</div>';
+  return h;
+}
+
+function _tvActiveRows(){return rows.filter(function(r){return r.status!=='pendente'&&r.status!=='planejamento'&&r.status!=='entregue';});}
+
+/* ═══ CONCLUSÃO DE FASE — RESOLUÇÃO DE ALIAS (15/08/2026) ═══
+   DEFEITO CORRIGIDO: o chip 'serra' era LIDO em três lugares (Carga Horária do
+   artefato, TV Carga Horária, TV Carga Horária por Setor) e ESCRITO em NENHUM.
+   FASE_SEQ — única fonte que grava fasesOk, usada pelo Verificar Progresso e
+   pelo chip da ficha — tem só a entrada {chip:'laser', ini:'corte', fim:'laser',
+   lbl:'Corte / Laser'}. Não existe entrada 'serra'. Resultado: marcar a Serra
+   como concluída gravava 'laser', e o card da Serra procurava 'serra' — nunca
+   achava, e o projeto ficava listado para sempre, por mais que fosse validado.
+   Este resolvedor aceita os dois chips para a mesma fase física de corte. */
+var _FASE_ALIAS={serra:['serra','laser'],serra_int:['serra_int'],serra_tubo:['serra_tubo'],engenharia:['engenharia','cadastro'],
+  /* 03/10/2026 — PCP: o painel grava a conclusão do cadastro como 'cadastro', mas a Carga Horária consulta a chave 'pcp'.
+     Sem este apelido, TODO cadastro concluído continuava contando como carga do PCP (43 projetos contados, 22 reais; 26 'vencidos', 5 reais). */
+  pcp:['pcp','cadastro']};/* Cadastro concluído implica engenharia entregue — evita repetir o órfão do chip 'serra' */
+function _faseFeita(r,chip){
+  if(!r)return false;
+  var cks=_FASE_ALIAS[chip]||[chip];
+  var fo=r.fasesOk||[];
+  for(var i=0;i<cks.length;i++){
+    if(fo.indexOf(cks[i])>=0)return true;
+    if(r.fasesCompletedDate&&r.fasesCompletedDate[cks[i]])return true;
+  }
+  return false;
+}
+/* ═══ POSIÇÃO NA CASCATA — REGRA ÚNICA (23/08/2026) ═══
+   Havia TRÊS regras diferentes no sistema, e por isso os números não batiam:
+     · Ronda PCP        — sem filtro nenhum  → Mont.Mecânica com 44
+     · TV Carga Horária — match exato de status → a mesma com 6
+     · Detalhe de fase  — posição na cascata (a correta)
+   Agora todas usam esta: o fluxo é encadeado, então projeto que já está num setor
+   posterior tem os anteriores concluídos, e projeto que ainda não chegou continua
+   na lista — é dele que vêm os "demais vencimentos" que faltavam nas abas.
+   `reprogramado` fica fora: é marca paralela, não posição de fluxo. */
+var _ORD_ST={projeto:0,planejamento:0,pendente:0,pcp:1,compras:2,servico_ext:2,
+  serra:3,laser:3,usinagem:4,usinagem_int:4,solda:5,acabamento:6,sep_cq:7,
+  mont_mec:8,painel:9,mont_el:9,testes:10,fat:11,
+  aguardando:12,em_desmontagem_carga:12,carregada:12,desmontagem:12,modificacoes:12,entregue:13};
+var _ORD_CHIP={engenharia:0,cadastro:1,pcp:1,compras:2,
+  serra:3,serra_int:3,serra_tubo:3,laser:3,cortelaser:3,
+  usinagem:4,solda:5,acab:6,acabamento:6,insp:7,inspecao:7,
+  mmec:8,mont_mec:8,mel:9,mont_el:9,testes:10,fat:11};
+function _jaPassouChip(r,chip){
+  var os=_ORD_ST[r.status], oc=_ORD_CHIP[chip];
+  if(os===undefined||oc===undefined)return false;
+  return os>oc;
+}
+function _phaseReachable(r,chip){
+  var allowed=_CK_STATUSES[chip];
+  if(!allowed)return true;
+  return allowed.indexOf(r.status)>=0;
+}
+
+function _tvKpiBox(val,label,cor,sub){
+  var h='<div style="flex:1;background:'+_TVC.card+';border:1px solid '+_TVC.brd+';border-radius:18px;padding:28px 24px;text-align:center;position:relative;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.05)">';
+  h+='<div style="position:absolute;top:0;left:0;right:0;height:5px;background:'+cor+'"></div>';
+  h+='<div style="font-size:72px;font-weight:900;color:'+cor+';line-height:1;letter-spacing:-2px">'+val+'</div>';
+  h+='<div style="font-size:15px;color:'+_TVC.txt2+';text-transform:uppercase;letter-spacing:1.5px;font-weight:800;margin-top:12px">'+label+'</div>';
+  if(sub)h+='<div style="font-size:13px;color:'+_TVC.txt3+';margin-top:6px">'+sub+'</div>';
+  h+='</div>';
+  return h;
+}
+
+function _computeFasesVencendo(){
+  var hoje=new Date();hoje.setHours(0,0,0,0);
+  var limite=new Date(hoje.getTime()+3*864e5);limite.setHours(23,59,59,999);
+  var _allDoneSt=['aguardando','em_desmontagem_carga','carregada','entregue','modificacoes'];
+  var out=[];
+  for(var i=0;i<rows.length;i++){
+    var r=rows[i];
+    if(r.status==='entregue'||r.status==='pendente'||r.status==='planejamento')continue;
+    var fOk=r.fasesOk||[];
+    var _cSI=-1;
+    for(var _ki=0;_ki<FASE_SEQ.length;_ki++){if(FASE_SEQ[_ki].st===r.status){_cSI=_ki;break;}}
+    for(var f=0;f<FASE_SEQ.length;f++){
+      var fase=FASE_SEQ[f],fimV=r[fase.fim];
+      if(fOk.indexOf(fase.chip)>=0)continue;
+      if(_allDoneSt.indexOf(r.status)>=0||_jaPassouChip(r,fase.chip))continue;
+      if(!fimV||_isOk(fimV))continue;
+      var d=parseDate2(fimV);if(!d)continue;
+      d.setHours(0,0,0,0);
+      if(d>=hoje&&d<=limite){
+        out.push({idx:i,proj:r.projeto,cli:r.modelo||'',fase:fase.lbl,fim:fimV,dias:Math.round((d-hoje)/864e5)});
+      }
+    }
+  }
+  out.sort(function(a,b){return a.dias-b.dias;});
+  return out;
+}
+
+function _getHorasTotal(r){
+  /* Calcula horas totais por processo para um projeto */
+  var result={};
+  PROC_KEYS.forEach(function(pk){result[pk]=0;});
+  var modelo=r.horas_modelo||'';
+  /* Horas do modelo principal — somente se existir no banco */
+  if(modelo&&HORAS_DB.horas&&HORAS_DB.maquinas.indexOf(modelo)>=0){
+    PROC_KEYS.forEach(function(pk){
+      var h=HORAS_DB.horas[pk];
+      if(h&&typeof h[modelo]==='number')result[pk]+=h[modelo];
+    });
+  }
+  /* Horas dos implementos selecionados — somente se existirem no banco */
+  var imps=r.horas_implementos||[];
+  imps.forEach(function(imp){
+    if(HORAS_DB.implementos.indexOf(imp)<0)return;/* implemento não existe mais */
+    PROC_KEYS.forEach(function(pk){
+      var h=HORAS_DB.horas[pk];
+      if(h&&typeof h[imp]==='number')result[pk]+=h[imp];
+    });
+  });
+  /* Aplicar customizações */
+  var custom=r.horas_custom||{};
+  Object.keys(custom).forEach(function(k){
+    if(result.hasOwnProperty(k)){var _cv=parseFloat(custom[k]);if(!isNaN(_cv))result[k]=_cv;}
+  });
+  result.total=PROC_KEYS.reduce(function(s,pk){return s+result[pk];},0);
+  return result;
+}
+
+function _rondaBuildFila(chip){
+  var s=_rondaFindSetor(chip);
+  var hoje=new Date();hoje.setHours(0,0,0,0);
+  var sem=_rondaSemanaBase(hoje);
+  var lim7=new Date(sem.dom.getTime()+7*864e5);lim7.setHours(23,59,59,999);
+  var out=[];
+  for(var i=0;i<rows.length;i++){
+    var r=rows[i];
+    if(r.status==='entregue'||r.status==='pendente'||r.status==='planejamento')continue;
+    if(_jaPassouChip(r,s.chip))continue;/* já passou desta etapa */
+    var ini=r[s.ini]||'',fim=r[s.fim]||'';
+    var fimD=parseDate2(fim);
+    var _rdKey=_rondaDoneKey(r.projeto,s.chip);
+    var concluida=_faseFeita(r,s.chip) || _isOk(fim) || !!_rondaDoneSet[_rdKey];
+    if(!fimD && !concluida)continue;
+    var diasFim=fimD?Math.round((fimD-hoje)/864e5):null;
+    var incluir=false;
+    if(concluida){
+      incluir=_rondaIncluiConcluidas && fimD && fimD>=sem.seg && fimD<=sem.dom;
+    }else if(_rondaJanela==='semana'){
+      incluir=fimD>=sem.seg && fimD<=sem.dom;
+    }else if(_rondaJanela==='sem7'){
+      incluir=fimD>=sem.seg && fimD<=lim7;
+    }else if(_rondaJanela==='atrasadas'){
+      incluir=fimD<hoje;
+    }else{
+      incluir=true;
+    }
+    if(!incluir)continue;
+    out.push({idx:i,proj:r.projeto,cli:r.modelo||'',modelo:r.modelo||'',ini:ini,fim:fim,fimD:fimD,diasFim:diasFim,concluida:concluida,status:r.status||''});
+  }
+  out.sort(function(a,b){
+    if(a.concluida!==b.concluida)return a.concluida?1:-1;
+    if(!a.fimD)return 1;if(!b.fimD)return -1;
+    return a.fimD-b.fimD;
+  });
+  return out;
+}
+
+function _rondaSemanaBase(d){
+  var dd=new Date(d);dd.setHours(0,0,0,0);
+  var dow=dd.getDay()||7;
+  var seg=new Date(dd.getTime()-(dow-1)*864e5);
+  var dom=new Date(seg.getTime()+6*864e5);
+  return {seg:seg, dom:dom};
+}
+
+function _rondaDoneKey(proj,chip){return proj+'\u00b7'+chip;}
+
+function _rondaFindSetor(chip){for(var i=0;i<_RONDA_SETORES.length;i++)if(_RONDA_SETORES[i].chip===chip)return _RONDA_SETORES[i];return _RONDA_SETORES[4];}
+
+
+
+var _tv={idx:0,playing:true,speed:12,prog:0,tick:null,clockTimer:null};
+var _tvCargaPairIdx=0,_tvHorasPairIdx=0;
+
+function _tvClock(){var el=document.getElementById('tv-clock');if(!el)return;var d=new Date();el.textContent=('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2)+':'+('0'+d.getSeconds()).slice(-2);}
+function _tvRenderDots(){var el=document.getElementById('tv-dots');if(!el)return;var h='';for(var i=0;i<_TV_PANELS.length;i++){h+='<span onclick="_tvGoto('+i+')" style="width:9px;height:9px;border-radius:50%;cursor:pointer;background:'+(i===_tv.idx?_TVC.cyan:_TVC.brd2)+'"></span>';}el.innerHTML=h;}
+function _tvUpdateSpeed(){var el=document.getElementById('tv-speed');if(el)el.textContent=_tv.speed+'s';}
+function _tvSpeed(delta){_tv.speed=Math.max(4,Math.min(40,_tv.speed+delta));_tvUpdateSpeed();if(_tv.playing){_tvStopTimer();_tvStartTimer();}}
+function _tvTogglePlay(){_tv.playing=!_tv.playing;var b=document.getElementById('tv-playbtn');if(b)b.textContent=_tv.playing?'⏸':'▶';if(_tv.playing){_tvStartTimer();}else{_tvStopTimer();}}
+/* ═══ TV — GRÁFICOS IGUAIS AOS DA APRESENTAÇÃO + PREVISÃO DE ENTREGAS (21/10/2026) ═══
+   Regras: (1) "vr" = todas as máquinas exceto 'pendente' (inclui já entregues), igual à aba Apresentação.
+           (2) O mês vem da data efetiva (entrega real > modificação > reprogramação > Máq. Final).
+           (3) O Modo TV NUNCA exibe nome de cliente — só nº do projeto e modelo.
+   No painel usa _saldoDias/_getEffectiveDate nativos; no totem usa as versões abaixo (mesma lógica). */
+var _TVX_MES=['JAN','FEV','MAR','ABR','MAI','JUN','JUL','AGO','SET','OUT','NOV','DEZ'];
+var _TVX_MES_LONGO=['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+var _TVX_CORES=['#6366f1','#8b5cf6','#a855f7','#d946ef','#ec4899','#f43f5e','#fb923c','#f59e0b','#eab308','#84cc16','#22c55e','#14b8a6'];
+var _TVX_ST={projeto:'Engenharia',pcp:'PCP',compras:'Compras',serra:'Serra',laser:'Laser',usinagem:'Usinagem',solda:'Solda',acabamento:'Acabamento',sep_cq:'Sep. Logística',mont_mec:'Mont. Mecânica',mont_el:'Mont. Elétrica',testes:'Testes',fat:'FAT',modificacoes:'Modificações',servico_ext:'Serviço Externo',aguardando:'Concluída',carregada:'Carregada',em_desmontagem_carga:'Em desmontagem',entregue:'Entregue'};
+function _tvxNum(t){var m=/([+-]?)\s*(\d+)/.exec(String(t==null?'':t));if(!m)return null;return (m[1]==='-'?-1:1)*parseInt(m[2],10);}
+function _tvxCalc(mf,en){var d1=parseDate2(mf),d2=parseDate2(en);if(!d1||!d2)return '';var diff=Math.round((d2-d1)/864e5);if(diff<0)return diff+' dias em atraso';if(diff>0)return '+'+diff+' dias';return 'No prazo';}
+function _tvxSaldo(r){
+  if(typeof _saldoDias==='function')return _saldoDias(r);
+  if(!r)return null;
+  var a=String(r.atraso||'').trim();
+  if(a==='No prazo')return {v:0};
+  var n=_tvxNum(a);
+  if(n!==null)return {v:n};
+  var num=function(t){return t==='No prazo'?0:_tvxNum(t);};
+  if(a==='Reprogramado'){var c=num(String(r.atraso_cong||'').trim());if(c===null)c=num(_tvxCalc(r.maq_final,r.entrega));return c===null?null:{v:c};}
+  if(['entregue','aguardando','carregada','em_desmontagem_carga'].indexOf(r.status)>=0||a==='Entregue'||a==='Concluída'||a==='Carregada'||a==='Em desmontagem'){var f=num(_tvxCalc(r.maq_final,r.entrega));return f===null?null:{v:f};}
+  return null;
+}
+function _tvxEff(r){
+  if(typeof _getEffectiveDate==='function')return _getEffectiveDate(r);
+  if(r.status==='entregue'&&r.entregue_em){var d0=parseDate2(r.entregue_em);if(d0){d0.setHours(0,0,0,0);return d0;}}
+  if(r.mod_entrega){var d2=parseDate2(r.mod_entrega);if(d2){d2.setHours(0,0,0,0);return d2;}}
+  if(r.reprog){var d3=parseDate2(r.reprog);if(d3){d3.setHours(0,0,0,0);return d3;}}
+  return parseDate2(r.maq_final);
+}
+function _tvxAno(){return new Date().getFullYear();}
+function _tvxVr(){return rows.filter(function(r){return r.status!=='pendente';});}
+function _tvxCorAtraso(v){
+  var C=_TVC;if(v===null||v===undefined)return 'rgba(0,0,0,.08)';
+  var a=Math.abs(v);return v>0?C.green:a<=5?C.green:a<=15?C.cyan:a<=30?C.amber:a<=50?C.orange:C.red;
+}
+function _tvxPad(n){return ('0'+n).slice(-2);}
+/* Dados do gráfico 1: máquinas por mês de entrega (todas exceto pendentes, pela data efetiva) */
+function _tvxDadosMaqMes(){
+  var ano=_tvxAno(),cont=[];for(var m=0;m<12;m++)cont.push(0);
+  var vr=_tvxVr();
+  for(var i=0;i<vr.length;i++){var d=_tvxEff(vr[i]);if(d&&d.getFullYear()===ano)cont[d.getMonth()]++;}
+  return {ano:ano,cont:cont};
+}
+/* Dados do gráfico 2: média de atraso por mês (mesma regra da Apresentação) */
+function _tvxDadosAtraso(){
+  var ano=_tvxAno(),b=[];for(var m=0;m<12;m++)b.push([]);
+  var vr=_tvxVr();
+  for(var i=0;i<vr.length;i++){
+    var r=vr[i],d=_tvxEff(r);
+    if(!d||d.getFullYear()!==ano)continue;
+    var sd=_tvxSaldo(r);if(!sd)continue;
+    /* ignora entregues com as 3 datas fictícias iguais (import antigo) — geram saldo 0 falso */
+    if(r.status==='entregue'&&r.entregue_em&&r.maq_final&&r.entrega&&r.entregue_em===r.maq_final&&r.maq_final===r.entrega&&/^15\/\d{2}\/2026$/.test(r.entregue_em))continue;
+    b[d.getMonth()].push(sd.v);
+  }
+  var avgs=[],tem=false;
+  for(var k=0;k<12;k++){
+    if(b[k].length){var s=0;for(var j=0;j<b[k].length;j++)s+=b[k][j];avgs.push({v:Math.round(s/b[k].length),n:b[k].length});tem=true;}
+    else avgs.push({v:null,n:0});
+  }
+  var com=avgs.filter(function(a){return a.v!==null;});
+  var geral=com.length?Math.round(com.reduce(function(x,y){return x+y.v;},0)/com.length):0;
+  return {ano:ano,avgs:avgs,geral:geral,tem:tem};
+}
+/* ═══ SLIDE: MÁQUINAS POR MÊS DE ENTREGA ═══ */
+function _tvEntregasMes(){
+  var C=_TVC,D=_tvxDadosMaqMes(),mesAtual=new Date().getMonth();
+  var maxN=Math.max.apply(null,D.cont)||1,total=D.cont.reduce(function(a,b){return a+b;},0),bH=430;
+  /* 30/10/2026 — tendência de produção: mais máquinas = melhor (verde sobe, vermelho cai) */
+  var _mPts=[];for(var _mi=0;_mi<12;_mi++){if(D.cont[_mi]>0)_mPts.push({x:_mi,y:D.cont[_mi]});}
+  var _mtr=_tvTend(_mPts),_mCor=C.txt3,_mBadge='';
+  if(_mtr){var _sobe=_mtr.slope>0.15,_cai=_mtr.slope<-0.15;_mCor=_sobe?C.green:(_cai?C.red:C.txt3);
+    _mBadge='<span style="font-size:15px;font-weight:800;color:'+_mCor+';margin-left:14px">'+(_sobe?'↗ produção crescente':(_cai?'↘ produção em queda':'→ produção estável'))+'</span>';}
+  var h='<div style="height:100%;display:flex;flex-direction:column;padding:0 8px"><div style="background:'+C.card+';border:1px solid '+C.brd+';border-radius:18px;padding:28px 32px;flex:1;box-shadow:0 1px 3px rgba(0,0,0,.05)">';
+  h+='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:22px"><div style="font-size:22px;font-weight:900;color:'+C.txt+'">📊 Máquinas por Mês de Entrega — '+D.ano+'</div>'+_mBadge;
+  h+='<span style="font-size:16px;font-weight:800;color:'+C.cyan+';background:'+C.cyan+'15;border:2px solid '+C.cyan+'44;padding:6px 18px;border-radius:24px">'+total+' máquinas no ano</span></div>';
+  h+='<div style="position:relative"><div style="display:flex;align-items:flex-end;gap:12px;height:'+bH+'px">';
+  for(var m=0;m<12;m++){
+    var n=D.cont[m],bh=Math.round(n/maxN*(bH-50));if(n>0&&bh<12)bh=12;
+    var cor=_TVX_CORES[m],atual=(m===mesAtual);
+    h+='<div style="flex:1;display:flex;flex-direction:column;align-items:center">';
+    h+=n>0?'<div style="font-size:24px;font-weight:900;color:'+cor+';margin-bottom:6px">'+n+'</div>':'<div style="height:36px"></div>';
+    h+='<div style="width:100%;height:'+bh+'px;background:'+(n>0?cor:'rgba(0,0,0,.06)')+';border:'+(atual?'3px solid '+C.txt:'1px solid '+(n>0?cor+'66':'rgba(0,0,0,.05)'))+';border-radius:10px 10px 0 0;box-shadow:'+(atual&&n>0?'0 0 16px '+cor+'88':'none')+'"></div>';
+    h+='<div style="font-size:14px;font-weight:'+(atual?'900':'700')+';color:'+(atual?C.txt:C.txt2)+';margin-top:8px;letter-spacing:1px">'+_TVX_MES[m]+'</div></div>';
+  }
+  h+='</div>';
+  if(_mtr){
+    var _myAt=function(val){var bh=Math.round(val/maxN*(bH-50));if(val>0&&bh<12)bh=12;return bH-bh-36;};
+    var _my0=_myAt(Math.max(0,_mtr.intercept)),_my1=_myAt(Math.max(0,_mtr.intercept+_mtr.slope*11));
+    h+='<svg viewBox="0 0 100 '+bH+'" preserveAspectRatio="none" style="position:absolute;top:0;left:0;width:100%;height:'+bH+'px;pointer-events:none;overflow:visible"><line x1="'+(0.5/12*100).toFixed(1)+'" y1="'+_my0.toFixed(1)+'" x2="'+(11.5/12*100).toFixed(1)+'" y2="'+_my1.toFixed(1)+'" stroke="'+_mCor+'" stroke-width="0.7" stroke-dasharray="2,1.2" stroke-linecap="round"/></svg>';
+  }
+  h+='</div><div style="margin-top:16px;font-size:12px;color:'+C.txt3+';text-align:center">Inclui máquinas já entregues · mês pela data de entrega (real, reprogramada ou Máq. Finalizada) · mês atual com contorno escuro'+(_mBadge?' · linha tracejada = tendência':'')+'</div>';
+  h+='</div></div>';
+  return h;
+}
+/* ═══ SLIDE: MÉDIA DE ATRASO POR MÊS ═══ */
+function _tvMediaAtraso(){
+  var C=_TVC,D=_tvxDadosAtraso(),mesAtual=new Date().getMonth(),bH=430;
+  var vals=D.avgs.filter(function(a){return a.v!==null;}).map(function(a){return Math.abs(a.v);});
+  var maxV=Math.max.apply(null,vals)||1;
+  /* 30/10/2026 — tendência (regressão) sobre os meses com dado: atraso menor = melhora */
+  var _tPts=[];for(var _ti=0;_ti<12;_ti++){if(D.avgs[_ti].v!==null)_tPts.push({x:_ti,y:Math.abs(D.avgs[_ti].v)});}
+  var _tr=_tvTend(_tPts),_tCor=C.txt3,_tBadge='',_melhoraA=false,_pioraA=false;
+  if(_tr){_melhoraA=_tr.slope<-0.3;_pioraA=_tr.slope>0.3;_tCor=_melhoraA?C.green:(_pioraA?C.red:C.txt3);
+    _tBadge='<span style="font-size:15px;font-weight:800;color:'+_tCor+';margin-left:14px">'+(_melhoraA?'↘ tendência de melhora':(_pioraA?'↗ tendência de piora':'→ estável'))+'</span>';}
+  var colGeral=Math.abs(D.geral)<=5?C.green:Math.abs(D.geral)<=20?C.amber:C.red;
+  var h='<div style="height:100%;display:flex;flex-direction:column;padding:0 8px"><div style="background:'+C.card+';border:1px solid '+C.brd+';border-radius:18px;padding:28px 32px;flex:1;box-shadow:0 1px 3px rgba(0,0,0,.05)">';
+  h+='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px"><div style="font-size:22px;font-weight:900;color:'+C.txt+'">📉 Média de Atraso por Mês — '+D.ano+' <span style="font-size:13px;font-weight:600;color:'+C.txt3+'">(em dias)</span>'+_tBadge+'</div>';
+  h+='<span style="font-size:16px;font-weight:800;color:'+colGeral+';background:'+colGeral+'15;border:2px solid '+colGeral+'44;padding:6px 18px;border-radius:24px">Média geral: '+(D.geral>0?'+':'')+D.geral+' dias</span></div>';
+  h+='<div style="font-size:12px;color:'+C.txt3+';margin-bottom:16px">↓ Barras menores = menor atraso = melhoria no planejamento · inclui máquinas entregues (saldo final contra a proposta)</div>';
+  if(!D.tem){h+='<div style="padding:80px 0;text-align:center;font-size:18px;color:'+C.txt3+'">Sem dados de atraso para '+D.ano+'</div></div></div>';return h;}
+  var pts=[];
+  h+='<div style="position:relative"><div style="display:flex;align-items:flex-end;gap:12px;height:'+bH+'px">';
+  for(var m=0;m<12;m++){
+    var a=D.avgs[m],tem=a.v!==null,abs=tem?Math.abs(a.v):0,bh=Math.round(abs/maxV*(bH-60));if(tem&&bh<10)bh=10;
+    var cor=_tvxCorAtraso(a.v);
+    if(tem)pts.push({x:(m+0.5)/12*100,y:bH-bh-26});
+    h+='<div style="flex:1;display:flex;flex-direction:column;align-items:center">';
+    h+=tem?'<div style="font-size:19px;font-weight:900;color:'+cor+';margin-bottom:4px">'+(a.v>0?'+':'')+a.v+'d</div>':'<div style="height:30px"></div>';
+    h+='<div style="width:100%;height:'+bh+'px;background:'+cor+';border:1px solid '+cor+'66;border-radius:10px 10px 0 0"></div>';
+    h+='<div style="font-size:11px;color:'+C.txt3+';margin-top:4px;height:14px">'+(tem?a.n+' proj.':'')+'</div>';
+    h+='<div style="font-size:14px;font-weight:'+(m===mesAtual?'900':'700')+';color:'+(m===mesAtual?C.txt:C.txt2)+';letter-spacing:1px">'+_TVX_MES[m]+'</div></div>';
+  }
+  h+='</div>';
+  if(_tr){
+    /* reta de regressão em coordenadas de tela, mesma fórmula bh do loop */
+    var _yAt=function(absval){var bh=Math.round(absval/maxV*(bH-60));if(bh<10)bh=10;return bH-bh-26;};
+    var _y0=_yAt(Math.abs(_tr.intercept)),_y1=_yAt(Math.abs(_tr.intercept+_tr.slope*11));
+    h+='<svg viewBox="0 0 100 '+bH+'" preserveAspectRatio="none" style="position:absolute;top:0;left:0;width:100%;height:'+bH+'px;pointer-events:none;overflow:visible"><line x1="'+(0.5/12*100).toFixed(1)+'" y1="'+_y0.toFixed(1)+'" x2="'+(11.5/12*100).toFixed(1)+'" y2="'+_y1.toFixed(1)+'" stroke="'+_tCor+'" stroke-width="0.7" stroke-dasharray="2,1.2" stroke-linecap="round"/></svg>';
+  }
+  h+='</div><div style="display:flex;gap:18px;margin-top:14px;justify-content:center;flex-wrap:wrap;font-size:12px;color:'+C.txt2+'">';
+  var leg=[[C.green,'Adiantado / no prazo (até −5d)'],[C.cyan,'Leve (−6 a −15d)'],[C.amber,'Moderado (−16 a −30d)'],[C.orange,'Significativo (−31 a −50d)'],[C.red,'Crítico (−51d ou mais)']];
+  for(var l=0;l<leg.length;l++)h+='<span><span style="display:inline-block;width:14px;height:9px;background:'+leg[l][0]+';border-radius:2px;margin-right:5px"></span>'+leg[l][1]+'</span>';
+  h+='<span><span style="display:inline-block;width:18px;border-top:2px dashed '+_tCor+';margin-right:5px;vertical-align:middle"></span>Tendência (regressão)</span></div></div></div>';
+  return h;
+}
+/* ═══ SLIDE: PREVISÃO DE ENTREGAS — MÊS ATUAL E PRÓXIMO (sem nome de cliente) ═══ */
+function _tvxPrevLista(mes,ano){
+  var list=[];
+  for(var i=0;i<rows.length;i++){
+    var r=rows[i];if(r.status==='entregue'||r.status==='pendente'||r.status==='planejamento')continue;
+    var d=_tvxEff(r);if(!d||d.getMonth()!==mes||d.getFullYear()!==ano)continue;
+    list.push({r:r,d:d});
+  }
+  list.sort(function(a,b){return a.d-b.d;});
+  return list;
+}
+function _tvPrevMeses(){
+  var C=_TVC,hoje=new Date(),mA=hoje.getMonth(),aA=hoje.getFullYear(),mP=mA+1,aP=aA;
+  if(mP>11){mP=0;aP++;}
+  function coluna(lista,mes,ano,cor,rotulo){
+    var MAXL=11;
+    var h2='<div style="flex:1;min-width:0;background:'+C.card+';border:2px solid '+cor+'44;border-radius:18px;padding:20px 24px;box-shadow:0 1px 3px rgba(0,0,0,.05);display:flex;flex-direction:column">';
+    h2+='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px"><div><div style="font-size:12px;font-weight:800;color:'+cor+';letter-spacing:2px">'+rotulo+'</div>';
+    h2+='<div style="font-size:24px;font-weight:900;color:'+C.txt+'">'+_TVX_MES_LONGO[mes]+' '+ano+'</div></div><div style="text-align:right"><div style="font-size:52px;font-weight:900;color:'+cor+';line-height:1">'+lista.length+'</div><div style="font-size:11px;color:'+C.txt3+';letter-spacing:1px">A ENTREGAR</div></div></div>';
+    if(!lista.length){h2+='<div style="padding:60px 0;text-align:center;font-size:17px;color:'+C.txt3+'">Nenhuma máquina prevista</div></div>';return h2;}
+    h2+='<div style="display:flex;flex-direction:column;gap:6px">';
+    var mostra=lista.slice(0,MAXL);
+    for(var j=0;j<mostra.length;j++){
+      var r=mostra[j].r,d=mostra[j].d,sd=_tvxSaldo(r),v=sd?sd.v:null,corS=_tvxCorAtraso(v);
+      var concl=(r.status==='aguardando'||r.status==='carregada'||r.status==='em_desmontagem_carga');
+      var reprog=!!r.reprog;
+      h2+='<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;background:'+(j%2?'rgba(0,0,0,.02)':C.card)+';border:1px solid '+C.brd+';border-left:4px solid '+(concl?C.green:corS)+';border-radius:10px">';
+      h2+='<div style="flex:1;min-width:0"><div style="font-size:16px;font-weight:800;color:'+C.txt+'">#'+esc(r.projeto)+'</div><div style="font-size:11px;color:'+C.txt3+';white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(r.modelo||'')+'</div></div>';
+      h2+='<div style="font-size:11px;font-weight:800;color:'+(concl?C.green:C.txt2)+';text-transform:uppercase;letter-spacing:.5px;white-space:nowrap">'+(_TVX_ST[r.status]||String(r.status||'').replace(/_/g,' '))+'</div>';
+      h2+='<div style="text-align:right;min-width:74px"><div style="font-size:16px;font-weight:800;color:'+C.txt+'">'+_tvxPad(d.getDate())+'/'+_tvxPad(d.getMonth()+1)+(reprog?' <span style="color:#4f46e5" title="reprogramada">⟳</span>':'')+'</div>';
+      h2+=(v!==null?'<div style="font-size:11px;font-weight:800;color:'+corS+'">'+(v>0?'+':'')+v+'d</div>':'')+'</div></div>';
+    }
+    if(lista.length>MAXL)h2+='<div style="text-align:center;font-size:13px;font-weight:700;color:'+C.txt3+';padding:4px 0">+ '+(lista.length-MAXL)+' outras máquinas</div>';
+    h2+='</div></div>';
+    return h2;
+  }
+  var h='<div style="height:100%;display:flex;gap:20px;padding:0 8px">';
+  h+=coluna(_tvxPrevLista(mA,aA),mA,aA,C.cyan,'MÊS ATUAL');
+  h+=coluna(_tvxPrevLista(mP,aP),mP,aP,C.purple,'PRÓXIMO MÊS');
+  h+='</div>';
+  return h;
+}
+
+function _tvStartTimer(){_tvStopTimer();_tv.prog=0;_tv.tick=setInterval(function(){_tv.prog+=100/(_tv.speed*10);var pb=document.getElementById('tv-progress');if(pb)pb.style.width=Math.min(100,_tv.prog)+'%';if(_tv.prog>=100)_tvNext(false);},100);}
+function _tvStopTimer(){if(_tv.tick){clearInterval(_tv.tick);_tv.tick=null;}}
+function _tvNext(manual){
+  var cur=_TV_PANELS[_tv.idx];
+  if(cur.id==='cargah'&&_tvCargaPairIdx<_TV_CARGA_PAIRS.length-1){_tvCargaPairIdx++;_tv.prog=0;_tvRender();if(manual&&_tv.playing){_tvStopTimer();_tvStartTimer();}return;}
+  if(cur.id==='cargahoras'&&_tvHorasPairIdx<_TV_HORAS_PAIRS.length-1){_tvHorasPairIdx++;_tv.prog=0;_tvRender();if(manual&&_tv.playing){_tvStopTimer();_tvStartTimer();}return;}
+  if(cur.id==='cargah')_tvCargaPairIdx=0;
+  if(cur.id==='cargahoras')_tvHorasPairIdx=0;
+  _tv.idx=(_tv.idx+1)%_TV_PANELS.length;_tv.prog=0;_tvRender();
+  if(manual&&_tv.playing){_tvStopTimer();_tvStartTimer();}
+}
+function _tvPrev(){
+  var cur=_TV_PANELS[_tv.idx];
+  if(cur.id==='cargah'&&_tvCargaPairIdx>0){_tvCargaPairIdx--;_tv.prog=0;_tvRender();if(_tv.playing){_tvStopTimer();_tvStartTimer();}return;}
+  if(cur.id==='cargahoras'&&_tvHorasPairIdx>0){_tvHorasPairIdx--;_tv.prog=0;_tvRender();if(_tv.playing){_tvStopTimer();_tvStartTimer();}return;}
+  _tv.idx=(_tv.idx-1+_TV_PANELS.length)%_TV_PANELS.length;_tvCargaPairIdx=0;_tvHorasPairIdx=0;_tv.prog=0;_tvRender();
+  if(_tv.playing){_tvStopTimer();_tvStartTimer();}
+}
+function _tvGoto(i){_tv.idx=i;_tvCargaPairIdx=0;_tvHorasPairIdx=0;_tv.prog=0;_tvRender();if(_tv.playing){_tvStopTimer();_tvStartTimer();}}
+
+function _tvRender(dataOnly){
+  var panel=_TV_PANELS[_tv.idx];
+  var tt=document.getElementById('tv-panel-title');
+  if(tt){var titleTxt=panel.icon+'  '+panel.title;if(panel.id==='cargah')titleTxt+='  ('+(_tvCargaPairIdx+1)+'/'+_TV_CARGA_PAIRS.length+')';if(panel.id==='cargahoras')titleTxt+='  ('+(_tvHorasPairIdx+1)+'/'+_TV_HORAS_PAIRS.length+')';tt.textContent=titleTxt;}
+  var ct=document.getElementById('tv-content');
+  if(!ct)return;
+  var html='';
+  if(panel.id==='panorama')html=_tvPanorama();
+  else if(panel.id==='funil')html=_tvFunil();
+  else if(panel.id==='cargah')html=_tvCargaHoraria();
+  else if(panel.id==='cargahoras')html=_tvCargaHorasSetor();
+  else if(panel.id==='ronda')html=_tvRonda();
+  else if(panel.id==='entregas')html=_tvEntregas();
+  else if(panel.id==='alertas')html=_tvAlertas();
+  else if(panel.id==='entregasMes')html=_tvEntregasMes();
+  else if(panel.id==='mediaAtraso')html=_tvMediaAtraso();
+  else if(panel.id==='prevMeses')html=_tvPrevMeses();
+  ct.innerHTML='<div>'+html+'</div>';
+  if(!dataOnly)_tvRenderDots();
+}
+
+function _tvBuildChrome(){
+  var ov=document.getElementById('tv-root');
+  var h='';
+  h+='<div style="display:flex;align-items:center;justify-content:space-between;padding:18px 36px;background:'+_TVC.card+';border-bottom:2px solid '+_TVC.brd+';flex-shrink:0">';
+  h+='<div style="display:flex;align-items:center;gap:20px">';
+  h+='<div style="font-size:26px;font-weight:900;letter-spacing:1px;color:'+_TVC.cyan+'">SPK MAQINOX</div>';
+  h+='<div style="width:2px;height:28px;background:'+_TVC.brd2+'"></div>';
+  h+='<div id="tv-panel-title" style="font-size:20px;font-weight:800;color:'+_TVC.txt+'"></div>';
+  h+='</div>';
+  h+='<div style="display:flex;align-items:center;gap:24px">';
+  h+='<div style="display:flex;align-items:center;gap:8px"><span style="width:11px;height:11px;border-radius:50%;background:'+_TVC.green+';box-shadow:0 0 10px '+_TVC.green+';animation:tvpulse 1.6s infinite"></span><span style="font-size:13px;font-weight:900;color:'+_TVC.green+';letter-spacing:1px">AO VIVO</span></div>';
+  h+='<div id="tv-clock" style="font-size:22px;font-weight:800;color:'+_TVC.txt+';font-variant-numeric:tabular-nums"></div>';
+  h+='<div id="tv-pubinfo" style="font-size:11px;color:'+_TVC.txt3+'"></div>';
+  h+='</div></div>';
+  h+='<div id="tv-content" style="flex:1;overflow:hidden;padding:26px 34px;position:relative;background:'+_TVC.bg+'"></div>';
+  h+='<div style="flex-shrink:0;padding:14px 36px;background:'+_TVC.card+';border-top:2px solid '+_TVC.brd+'">';
+  h+='<div style="height:5px;background:'+_TVC.brd+';border-radius:3px;overflow:hidden;margin-bottom:12px"><div id="tv-progress" style="height:100%;width:0%;background:linear-gradient(90deg,#06b6d4,'+_TVC.cyan+');transition:width .25s linear"></div></div>';
+  h+='<div style="display:flex;align-items:center;justify-content:space-between">';
+  h+='<div style="display:flex;align-items:center;gap:8px">';
+  h+='<button onclick="_tvPrev()" style="background:'+_TVC.bg+';border:1px solid '+_TVC.brd2+';color:'+_TVC.txt+';width:40px;height:40px;border-radius:10px;font-size:16px;cursor:pointer">◀</button>';
+  h+='<button id="tv-playbtn" onclick="_tvTogglePlay()" style="background:linear-gradient(135deg,#0891b2,#06b6d4);border:none;color:#fff;width:48px;height:40px;border-radius:10px;font-size:16px;cursor:pointer;font-weight:900">⏸</button>';
+  h+='<button onclick="_tvNext(true)" style="background:'+_TVC.bg+';border:1px solid '+_TVC.brd2+';color:'+_TVC.txt+';width:40px;height:40px;border-radius:10px;font-size:16px;cursor:pointer">▶</button>';
+  h+='</div>';
+  h+='<div id="tv-dots" style="display:flex;gap:10px"></div>';
+  h+='<div style="display:flex;align-items:center;gap:10px;font-size:12px;color:'+_TVC.txt2+'">';
+  h+='<span>Velocidade</span>';
+  h+='<button onclick="_tvSpeed(-4)" style="background:'+_TVC.bg+';border:1px solid '+_TVC.brd2+';color:'+_TVC.txt+';width:32px;height:32px;border-radius:8px;cursor:pointer">−</button>';
+  h+='<span id="tv-speed" style="font-weight:800;color:'+_TVC.cyan+';min-width:46px;text-align:center"></span>';
+  h+='<button onclick="_tvSpeed(4)" style="background:'+_TVC.bg+';border:1px solid '+_TVC.brd2+';color:'+_TVC.txt+';width:32px;height:32px;border-radius:8px;cursor:pointer">+</button>';
+  h+='</div></div></div>';
+  h+='<style>@keyframes tvpulse{0%,100%{opacity:1}50%{opacity:.3}}@keyframes tvfade{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}#tv-content>div{animation:tvfade .45s ease}</style>';
+  ov.innerHTML=h;
+  _tvRenderDots();_tvUpdateSpeed();_tvClock();
+  if(_tv.clockTimer)clearInterval(_tv.clockTimer);
+  _tv.clockTimer=setInterval(_tvClock,1000);
+}
+
+document.addEventListener('keydown',function(e){
+  if(e.key==='ArrowRight')_tvNext(true);
+  else if(e.key==='ArrowLeft')_tvPrev();
+  else if(e.key===' '){e.preventDefault();_tvTogglePlay();}
+});
+
+
+/* ═══ 07/10/2026 — ALERTA DE DADO VELHO ═══
+   Antes o totem mostrava "Publicado: ..." sem avisar quando ficava velho: se ninguém publicasse, o chão de
+   fábrica via informação vencida sem saber. Agora: até 24 h normal; 24–48 h âmbar; acima de 48 h vermelho. */
+function _tvIdade(){
+  try{
+    var pi=document.getElementById('tv-pubinfo');if(!pi||!_lastPublishedAt)return;
+    var m=/(\d{2})\/(\d{2})\/(\d{4})[^\d]*(\d{2}):(\d{2})/.exec(_lastPublishedAt);if(!m)return;
+    var pub=new Date(+m[3],+m[2]-1,+m[1],+m[4],+m[5]),h=(Date.now()-pub.getTime())/36e5;
+    if(h<24){pi.textContent='Publicado: '+_lastPublishedAt;pi.style.color='';pi.style.fontWeight='';return;}
+    var dias=Math.floor(h/24),txt=h<48?('⚠ Dados de há '+Math.round(h)+' h — publicar no painel'):('⛔ DADOS DESATUALIZADOS há '+dias+' dias — publicar no painel');
+    pi.textContent=txt+' (último: '+_lastPublishedAt+')';
+    pi.style.color=h<48?'#f59e0b':'#ef4444';pi.style.fontWeight='800';
+  }catch(e){}
+}
+setInterval(_tvIdade,5*60*1000);
+async function _carregarDados(silencioso){
+  try{
+    var r=await fetch(DADOS_URL+(DADOS_URL.indexOf('?')>=0?'&':'?')+'_ts='+Date.now());
+    if(!r.ok)throw new Error('HTTP '+r.status);
+    var data=await r.json();
+    rows=(data.rows||[]).map(function(r){return r;});
+    if(data.hdrTitle)hdrTitle=data.hdrTitle;
+    if(data.hdrSub)hdrSub=data.hdrSub;
+    if(data.ganttCap)_ganttCap=data.ganttCap;
+    /* Marcações da Ronda feitas no painel do PCP — sem isso o totem mostra como
+       pendente aquilo que já foi validado no outro dispositivo. */
+    _rondaDoneSet=(data.rondaDone&&typeof data.rondaDone==='object')?data.rondaDone:{};
+    /* Horas customizadas: modelos/implementos novos e overrides feitos no painel */
+    if(data.horasExtra&&typeof data.horasExtra==='object'){
+      _horasExtra=data.horasExtra;
+      try{_applyHorasExtra();}catch(e){}
+    }
+    /* Pontes e paradas de fábrica — sem isso os dias úteis divergem do painel */
+    if(Array.isArray(data.feriadosExtra))_FERIADOS_EXTRA=data.feriadosExtra;
+    /* Jornada e capacidade semanal */
+    if(data.workDayH&&typeof data.workDayH==='object')_WORK_DAY_H=data.workDayH;
+    if(typeof data.weekH==='number'&&data.weekH>0)_WEEK_H_PER_WORKER=data.weekH;
+    /* Aviso se o painel estiver publicando um formato mais novo que este totem */
+    if(typeof data.schemaV==='number'&&data.schemaV>2){
+      console.warn('[Modo TV] O painel publicou schemaV='+data.schemaV+' e este totem entende até 2. Atualize o index.html.');
+    }
+    _lastPublishedAt=data.publishedAt||'';
+    var pi=document.getElementById('tv-pubinfo');
+    if(pi&&_lastPublishedAt)pi.textContent='Publicado: '+_lastPublishedAt;_tvIdade();
+    if(!silencioso)_tvRender(true);
+    else _tvRender(true);
+    return true;
+  }catch(err){
+    if(!silencioso){
+      document.getElementById('tv-loading').style.display='none';
+      document.getElementById('tv-err').style.display='flex';
+      document.getElementById('tv-err-msg').textContent=String(err.message||err);
+    }
+    return false;
+  }
+}
+
+async function _boot(){
+  var ok=await _carregarDados(false);
+  if(!ok)return;
+  document.getElementById('tv-loading').style.display='none';
+  document.getElementById('tv-root').style.display='flex';
+  _tvBuildChrome();
+  _tvRender();
+  _tvStartTimer();
+  /* ═══ MESMO FLUXO DO ARTEFATO (19/08/2026) ═══
+     O painel só busca atualização quando a aba está visível (visibilityState).
+     O totem não tinha essa guarda: ficava batendo no GitHub mesmo com a tela
+     apagada ou a aba em segundo plano. E, ao voltar a ficar visível, esperava o
+     ciclo inteiro para atualizar — podendo exibir dado velho por minutos. */
+  setInterval(function(){
+    if(typeof document!=='undefined'&&document.visibilityState==='hidden')return;
+    if(typeof navigator!=='undefined'&&navigator.onLine===false)return;
+    _carregarDados(true);
+  },POLL_MS);
+  /* Voltou a ficar visível → recarrega na hora, sem esperar o próximo ciclo */
+  document.addEventListener('visibilitychange',function(){
+    if(document.visibilityState==='visible')_carregarDados(true);
+  });
+  /* Reconectou → recarrega na hora */
+  window.addEventListener('online',function(){_carregarDados(true);});
+}
+_boot();
+</script>
+</body>
+</html>
+" style="font-size:13px;color:#fca5a5;max-width:600px"></div>
   <div style="font-size:12px;color:#94a3b8;max-width:600px">Verifique se o arquivo dados_tv.json foi publicado corretamente no repositório, e se DADOS_URL abaixo aponta pro link correto (raw.githubusercontent.com).</div>
 </div>
 <div id="tv-root" style="display:none"></div>
