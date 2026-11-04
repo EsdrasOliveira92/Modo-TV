@@ -317,11 +317,17 @@ function _tvCargaHoraria(){
     for(var i=0;i<rows.length;i++){
       var r=rows[i];
       if(['pendente','planejamento','entregue','aguardando','em_desmontagem_carga','carregada'].indexOf(r.status)>=0)continue;
-      if(_jaPassouChip(r,s.ck))continue;/* já passou desta etapa — os que ainda não chegaram ficam */
+      if(_jaPassouChip(r,s.ck))continue;/* já passou desta etapa */
       if(r[s.ff]==='ok'||_faseFeita(r,s.ck))continue;
       if(_rondaDoneSet&&_rondaDoneSet[r.projeto+'\u00b7'+s.ck])continue;
       var di=parseDate2(r[s.fi]),df=parseDate2(r[s.ff]);
       if(!df)continue;
+      /* ═══ 04/11/2026 — CONGELAR VENCIDO QUE NÃO CHEGOU NO SETOR (Totem público) ═══
+         Mesma regra do painel interno. Próximos a vencer (data futura) aparecem; só o
+         VENCIDO de um setor que ainda não recebeu o projeto é que some — não é atraso
+         de quem nem recebeu o material. Ex.: Vitafor preso na Eng. não polui PCP/Serra. */
+      var _osC=_ORD_ST[r.status], _ocC=_ORD_CHIP[s.ck];
+      if(_osC!==undefined&&_ocC!==undefined&&_osC<_ocC && df<hoje)continue;
       lista.push({cli:r.modelo||'',proj:r.projeto,mod:r.modelo,ini:r[s.fi],fim:r[s.ff],di:di,df:df,dias:Math.round((df-hoje)/864e5)});
     }
     lista.sort(function(a,b){return a.df-b.df;});
@@ -788,6 +794,9 @@ function _rondaBuildFila(chip){
     var fimD=parseDate2(fim);
     var _rdKey=_rondaDoneKey(r.projeto,s.chip);
     var concluida=_faseFeita(r,s.chip) || _isOk(fim) || !!_rondaDoneSet[_rdKey];
+    /* 04/11/2026 — congela só o VENCIDO que não chegou no setor; próximos aparecem */
+    var _osR=_ORD_ST[r.status], _ocR=_ORD_CHIP[s.chip];
+    if(_osR!==undefined&&_ocR!==undefined&&_osR<_ocR && !concluida && fimD && fimD<hoje)continue;
     if(!fimD && !concluida)continue;
     var diasFim=fimD?Math.round((fimD-hoje)/864e5):null;
     var incluir=false;
