@@ -243,7 +243,7 @@ function _tvLeadTime(r){
   ini.setHours(0,0,0,0);fim.setHours(0,0,0,0);
   var d=Math.round((fim-ini)/864e5);return d>=0?d:null;
 }
-var _TV_PROJ_FINAL_ST={entregue:1,aguardando:1,carregada:1,em_desmontagem_carga:1,modificacoes:1};
+var _TV_PROJ_FINAL_ST={entregue:1,aguardando:1,carregada:1,em_desmontagem_carga:1,desmontagem:1,modificacoes:1}/* 04/11/2026 — desmontagem é finalizada */;
 function _tvProjFinalizado(r){return !!(r&&_TV_PROJ_FINAL_ST[r.status]);}
 function _tvProjSucesso(r){
   if(!_tvProjFinalizado(r))return null;
@@ -316,7 +316,7 @@ function _tvCargaHoraria(){
     var lista=[];
     for(var i=0;i<rows.length;i++){
       var r=rows[i];
-      if(['pendente','planejamento','entregue','aguardando','em_desmontagem_carga','carregada'].indexOf(r.status)>=0)continue;
+      if(['pendente','planejamento','entregue','aguardando','em_desmontagem_carga','desmontagem','carregada'].indexOf(r.status)>=0)continue;
       if(_jaPassouChip(r,s.ck))continue;/* já passou desta etapa */
       if(r[s.ff]==='ok'||_faseFeita(r,s.ck))continue;
       if(_rondaDoneSet&&_rondaDoneSet[r.projeto+'\u00b7'+s.ck])continue;
@@ -346,7 +346,7 @@ function _tvCargaHoraria(){
     if(lista.length===0){
       for(var pi=0;pi<rows.length;pi++){
         var pr=rows[pi];
-        if(['pendente','planejamento','entregue','aguardando','em_desmontagem_carga','carregada'].indexOf(pr.status)>=0)continue;
+        if(['pendente','planejamento','entregue','aguardando','em_desmontagem_carga','desmontagem','carregada'].indexOf(pr.status)>=0)continue;
         if(_jaPassouChip(pr,s.ck))continue;/* mesma regra da lista principal */
         if(pr[s.ff]==='ok'||_faseFeita(pr,s.ck))continue;
         if(_rondaDoneSet&&_rondaDoneSet[pr.projeto+'\u00b7'+s.ck])continue;
@@ -434,7 +434,7 @@ function _tvCargaHorasSetor(){
     var bars=[], _backlogTV=[];/* fases vencidas: distribuídas por capacidade adiante */
     for(var i=0;i<rows.length;i++){
       var r=rows[i];
-      if(['pendente','planejamento','entregue','aguardando','em_desmontagem_carga','carregada'].indexOf(r.status)>=0)continue;
+      if(['pendente','planejamento','entregue','aguardando','em_desmontagem_carga','desmontagem','carregada'].indexOf(r.status)>=0)continue;
       if(r[s.fi]==='ok'||r[s.ff]==='ok')continue;
       if(_faseFeita(r,s.hk))continue;
       if(_rondaDoneSet&&_rondaDoneSet[r.projeto+'\u00b7'+s.hk])continue;
@@ -640,7 +640,7 @@ function _tvFunil(){
     {l:'Corte/Serra/Laser',st:['laser'],c:_TVC.cyan},{l:'Usinagem',st:['usinagem'],c:_TVC.blue},
     {l:'Solda',st:['solda'],c:_TVC.orange},{l:'Acabamento',st:['acabamento'],c:'#ca8a04'},
     {l:'Separação Logística',st:['sep_cq','inspecao'],c:_TVC.green},{l:'Montagem',st:['mont_mec','mont_el'],c:_TVC.pink},
-    {l:'Testes/FAT',st:['testes','fat'],c:_TVC.purple},{l:'Finalização',st:['aguardando','em_desmontagem_carga','carregada'],c:_TVC.teal}
+    {l:'Testes/FAT',st:['testes','fat'],c:_TVC.purple},{l:'Finalização',st:['aguardando','em_desmontagem_carga','desmontagem','carregada'],c:_TVC.teal}
   ];
   var cont=etapas.map(function(e){var n=0;for(var i=0;i<rows.length;i++){if(e.st.indexOf(rows[i].status)>=0)n++;}return {l:e.l,c:e.c,n:n};});
   var max=Math.max.apply(null,cont.map(function(x){return x.n;}).concat([1]));
@@ -726,7 +726,7 @@ function _tvKpiBox(val,label,cor,sub){
 function _computeFasesVencendo(){
   var hoje=new Date();hoje.setHours(0,0,0,0);
   var limite=new Date(hoje.getTime()+3*864e5);limite.setHours(23,59,59,999);
-  var _allDoneSt=['aguardando','em_desmontagem_carga','carregada','entregue','modificacoes'];
+  var _allDoneSt=['aguardando','em_desmontagem_carga','desmontagem','carregada','entregue','modificacoes'];
   var out=[];
   for(var i=0;i<rows.length;i++){
     var r=rows[i];
@@ -864,7 +864,7 @@ function _tvxSaldo(r){
   if(n!==null)return {v:n};
   var num=function(t){return t==='No prazo'?0:_tvxNum(t);};
   if(a==='Reprogramado'){var c=num(String(r.atraso_cong||'').trim());if(c===null)c=num(_tvxCalc(r.maq_final,r.entrega));return c===null?null:{v:c};}
-  if(['entregue','aguardando','carregada','em_desmontagem_carga'].indexOf(r.status)>=0||a==='Entregue'||a==='Concluída'||a==='Carregada'||a==='Em desmontagem'){var f=num(_tvxCalc(r.maq_final,r.entrega));return f===null?null:{v:f};}
+  if(['entregue','aguardando','carregada','em_desmontagem_carga','desmontagem'].indexOf(r.status)>=0||a==='Entregue'||a==='Concluída'||a==='Carregada'||a==='Em desmontagem'){var f=num(_tvxCalc(r.maq_final,r.entrega));return f===null?null:{v:f};}
   return null;
 }
 function _tvxEff(r){
@@ -1005,7 +1005,7 @@ function _tvPrevMeses(){
     var mostra=lista.slice(0,MAXL);
     for(var j=0;j<mostra.length;j++){
       var r=mostra[j].r,d=mostra[j].d,sd=_tvxSaldo(r),v=sd?sd.v:null,corS=_tvxCorAtraso(v);
-      var concl=(r.status==='aguardando'||r.status==='carregada'||r.status==='em_desmontagem_carga');
+      var concl=(r.status==='aguardando'||r.status==='carregada'||r.status==='em_desmontagem_carga'||r.status==='desmontagem');
       var reprog=!!r.reprog;
       h2+='<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;background:'+(j%2?'rgba(0,0,0,.02)':C.card)+';border:1px solid '+C.brd+';border-left:4px solid '+(concl?C.green:corS)+';border-radius:10px">';
       h2+='<div style="flex:1;min-width:0"><div style="font-size:16px;font-weight:800;color:'+C.txt+'">#'+esc(r.projeto)+'</div><div style="font-size:11px;color:'+C.txt3+';white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(r.modelo||'')+'</div></div>';
